@@ -1,0 +1,15 @@
+# Caddy on the public VPS. TLS certificates are automatic.
+# 10.8.0.2 = the CT's WireGuard address (BIND_ADDRESS in .env.prod).
+#
+# Caddy already does what the API and storage need:
+#   - keeps the original Host header (presigned URLs are signed for media.nostos.pt)
+#   - streams request bodies without buffering or a size limit (large original uploads)
+#   - replaces any client-sent X-Forwarded-For with the real client IP
+
+api.nostos.pt {
+	reverse_proxy 10.8.0.2:3000
+}
+
+media.nostos.pt {
+	reverse_proxy 10.8.0.2:8333
+}
