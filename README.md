@@ -11,7 +11,7 @@ ADMIN_EMAIL=you@nostos.pt ADMIN_PASSWORD='a-long-password' docker compose up --b
 | Service    | What it does                                                        | Port |
 | ---------- | ------------------------------------------------------------------- | ---- |
 | `postgres` | PostgreSQL 18                                                       | 5432 |
-| `s3`       | SeaweedFS, an S3-compatible store for local dev                     | 8333 |
+| `s3`       | SeaweedFS, S3-compatible storage (also used in production)          | 8333 |
 | `migrate`  | One-shot: `prisma migrate deploy`, creates the bucket, seeds admin | –    |
 | `api`      | The API (bundled, ~no dependencies, non-root)                       | 3000 |
 
@@ -70,7 +70,7 @@ The bucket is **private**. The API never streams image bytes:
    - Public archive: `display`/`thumbnail` renditions only. **Originals are never exposed.**
    - Client galleries: the original is included only when `allowDownload` is on.
 
-Local dev uses SeaweedFS. For AWS, remove `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT` and `S3_FORCE_PATH_STYLE`, set real credentials, and add a CORS rule on the bucket that allows `PUT`/`GET` from the site origin.
+Local dev and production both use SeaweedFS (credentials injected from env by `docker/seaweedfs/entrypoint.sh`). To move to AWS later, remove `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT` and `S3_FORCE_PATH_STYLE`, set real credentials, and add a CORS rule on the bucket that allows `PUT`/`GET` from the site origin.
 
 > Not built yet: generating `display`/`thumbnail` renditions and the watermark (e.g. `sharp` in a worker or an S3-triggered Lambda). Until then, set `displayKey` manually. Public photos without one have no URLs.
 
@@ -107,9 +107,8 @@ Deploy the website and API on the same site (e.g. `nostos.pt` and `api.nostos.pt
 | Client gallery  | `GET /g/:slug`, `POST /g/:slug/unlock`, `GET /g/:slug/photos`, `PUT /g/:slug/photos/:photoId/selection`   | Link + code |
 | Health          | `GET /health/live`, `GET /health/ready`                                                                   | Public |
 
-## Production checklist
+## Production
 
-- `COOKIE_SECRET`: a long random value (`openssl rand -base64 48`); `COOKIE_SECURE=true`.
-- `CORS_ORIGINS`: the real site origin(s).
-- Run the `migrate` image (or `pnpm db:deploy`) before starting a new API version.
-- Run behind a TLS-terminating proxy (`trustProxy` is on when `NODE_ENV=production`).
+Runs from `compose.prod.yml` in a Debian CT behind a WireGuard reverse proxy. See
+**[deploy/README.md](deploy/README.md)** for CT setup, proxy config (Caddy/nginx),
+`TRUST_PROXY`, backups and troubleshooting.
