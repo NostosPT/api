@@ -25,7 +25,7 @@ export async function buildApp() {
       level: env.LOG_LEVEL,
       redact: ["req.headers.cookie", "req.headers.authorization"],
     },
-    trustProxy: env.NODE_ENV === "production",
+    trustProxy: env.TRUST_PROXY,
   });
 
   app.setValidatorCompiler(validatorCompiler);

@@ -12,6 +12,19 @@ const schema = z.object({
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   /** Comma-separated list of allowed browser origins (the website / admin). */
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
+  /**
+   * Which reverse proxies may set X-Forwarded-For. Needed so req.ip (rate limits,
+   * session logs) is the visitor, not the proxy. "false", "true" (trust anyone; avoid),
+   * or a comma-separated list of IPs/CIDRs, e.g. the proxy's WireGuard address "10.8.0.1".
+   */
+  TRUST_PROXY: z
+    .string()
+    .default("false")
+    .transform((v): boolean | string[] => {
+      if (v === "true") return true;
+      if (v === "false" || v === "") return false;
+      return v.split(",").map((s) => s.trim());
+    }),
 
   DATABASE_URL: z.url(),
 
