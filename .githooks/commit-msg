@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -e
+
+commit_msg_file="$1"
+
+# Check for co-author attribution
+if grep -i "co-authored-by" "$commit_msg_file" >/dev/null 2>&1; then
+  echo "Error: Co-authored-by trailers are strictly forbidden." >&2
+  exit 1
+fi
+
+# Count non-comment, non-empty lines
+lines=$(grep -v '^[[:space:]]*#' "$commit_msg_file" | grep -v '^[[:space:]]*$' | wc -l | tr -d ' ')
+
+if [ "$lines" -eq 0 ]; then
+  echo "Error: Commit message cannot be empty." >&2
+  exit 1
+fi
+
+if [ "$lines" -gt 1 ]; then
+  echo "Error: Commit message must be a single line. Multi-line commit messages are forbidden." >&2
+  echo "Your commit message has $lines lines." >&2
+  exit 1
+fi
