@@ -11,6 +11,7 @@ import authPlugin from "./auth/plugin.js";
 import { authRoutes } from "./auth/routes.js";
 import { clientRoutes } from "./clients/routes.js";
 import { env } from "./config/env.js";
+import docsPlugin from "./docs/plugin.js";
 import { clientGalleryRoutes } from "./galleries/client-routes.js";
 import { galleryRoutes } from "./galleries/routes.js";
 import { Prisma } from "./generated/prisma/client.js";
@@ -40,6 +41,7 @@ export async function buildApp() {
   await app.register(cookie, { secret: env.COOKIE_SECRET });
   await app.register(rateLimit, { max: 300, timeWindow: "1 minute" });
   await app.register(authPlugin);
+  await app.register(docsPlugin);
 
   app.setErrorHandler((err, req, reply) => {
     if (hasZodFastifySchemaValidationErrors(err)) {
