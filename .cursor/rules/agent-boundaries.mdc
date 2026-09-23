@@ -1,0 +1,13 @@
+---
+description: Agent boundaries for git branch, commits, and co-authors
+globs: *
+alwaysApply: true
+---
+
+# Agent Boundaries
+
+- **No changes on `main`**: Never commit directly to `main`. Use `develop` or feature branches.
+- **Granular commits**: Commit progress incrementally as units of work finish.
+- **Single-line commits**: Keep every commit message to exactly one line, brief and direct.
+- **No co-authors**: Never add `Co-authored-by:` or assistant tags under any circumstances.
+- **Feature directory organization**: Organize code using feature directories. Group related functions/logic inside feature folders so the tree is easy to navigate without inspecting file contents.

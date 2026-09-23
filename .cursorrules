@@ -1,0 +1,8 @@
+# Cursor Rules & Agent Boundaries
+
+- Do not make changes or commit directly to `main`. Always work on `develop` or a feature branch.
+- Commit granularly as logical tasks are completed.
+- Commit messages must be strictly a single line, brief and direct (e.g. `feat: ...`, `fix: ...`, `chore: ...`).
+- Never add co-author trailers (`Co-authored-by:`) or any agent attribution under any circumstances.
+- Organize code using directories: Group related functions and components into feature folders so the project is easy to navigate without opening files.
+- Respect git hooks configured in `.githooks/`.
