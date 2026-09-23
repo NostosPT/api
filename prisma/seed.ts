@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { hash } from "@node-rs/argon2";
+import { hashPassword } from "../src/auth/password.js";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 
 // Creates the first admin account from ADMIN_EMAIL / ADMIN_PASSWORD. Safe to re-run.
@@ -13,7 +13,7 @@ if (!email || !password || password.length < 12) {
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env["DATABASE_URL"]! }) });
 
-const passwordHash = await hash(password, { memoryCost: 19456, timeCost: 2, parallelism: 1 });
+const passwordHash = await hashPassword(password);
 const user = await prisma.user.upsert({
   where: { email },
   create: { email, name: process.env["ADMIN_NAME"] ?? "Admin", role: "ADMIN", passwordHash },
