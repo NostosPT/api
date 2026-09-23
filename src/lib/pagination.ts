@@ -18,3 +18,7 @@ export function page<T extends { id: string }>(rows: T[], take: number) {
   const items = hasMore ? rows.slice(0, take) : rows;
   return { items, nextCursor: hasMore ? items.at(-1)!.id : null };
 }
+
+/** Response schema for a `page()` of `item`. */
+export const pageOf = <T extends z.ZodType>(item: T) =>
+  z.object({ items: z.array(item), nextCursor: z.string().nullable() });

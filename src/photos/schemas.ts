@@ -31,3 +31,39 @@ export const photoListQuery = z.object({
   tag: z.string().optional(),
   visibility: z.enum(Visibility).optional(),
 });
+
+/** A photo as stored. Shows up as the `Photo` component in the OpenAPI spec. */
+export const photoResponse = z
+  .object({
+    id: z.string(),
+    number: z.number().int(),
+    title: z.string().nullable(),
+    description: z.string().nullable(),
+    originalKey: z.string(),
+    displayKey: z.string().nullable(),
+    thumbnailKey: z.string().nullable(),
+    width: z.number().int().nullable(),
+    height: z.number().int().nullable(),
+    takenAt: z.date().nullable(),
+    location: z.string().nullable(),
+    category: z.string().nullable(),
+    tags: z.array(z.string()),
+    visibility: z.enum(Visibility),
+    availability: z.enum(Availability),
+    priceCents: z.number().int().nullable(),
+    currency: z.string(),
+    watermarked: z.boolean(),
+    photographerId: z.string().nullable(),
+    createdAt: z.date(),
+    updatedAt: z.date(),
+  })
+  .meta({ id: "Photo" });
+
+/** Adds short-lived presigned URLs, null when that rendition isn't available. */
+export const photoWithUrlsResponse = photoResponse.extend({
+  urls: z.object({
+    display: z.string().nullable(),
+    thumbnail: z.string().nullable(),
+    original: z.string().nullable(),
+  }),
+});

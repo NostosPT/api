@@ -48,6 +48,7 @@ src/
   services/           Studio services (public list, admin CRUD)
   galleries/          Private client galleries: staff routes + client access
   health/             Liveness/readiness
+  docs/               OpenAPI spec + Swagger UI
 prisma/               Schema, migrations, seed
 scripts/              storage-init
 ```
@@ -93,6 +94,10 @@ Two audiences, two mechanisms:
 Deploy the website and API on the same site (e.g. `nostos.pt` and `api.nostos.pt`) so cookies work with `SameSite=Lax`. The frontend must send `credentials: "include"`.
 
 ## Endpoints
+
+Interactive docs are at `/docs` (the root URL redirects there), with the OpenAPI spec at
+`/docs/json` and `/docs/yaml`. The spec is generated from each route's Zod schemas; add a
+`response` schema to a route to document what it returns (see `src/photos/`).
 
 | Area            | Routes                                                                                                  | Access |
 | --------------- | ------------------------------------------------------------------------------------------------------- | ------ |
