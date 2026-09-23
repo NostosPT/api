@@ -181,12 +181,52 @@ docker compose -f compose.prod.yml --env-file .env.prod logs api | grep remoteAd
 It should show your public IP. If it shows `10.8.0.1` or a `172.x.0.1` Docker
 gateway, add that address to `TRUST_PROXY` and run `up -d` again. Never set it to `true`.
 
+## 8. Continuous deployment (GitHub Actions)
+
+`.github/workflows/ci-deploy.yml` has two jobs:
+
+- **`ci`** — `pnpm typecheck` + `pnpm build`, on a GitHub-hosted runner, on every push to
+  every branch and every PR into `main`. This is required (via `needs: ci`) before the
+  `deploy` job is even attempted, on any branch.
+- **`deploy`** — only on a push to `main`, and only once `ci` has passed. It rebuilds and
+  restarts `compose.prod.yml` on the CT itself and waits for `/health/ready`.
+
+Because the CT is only reachable over WireGuard, `deploy` doesn't run on a GitHub-hosted
+runner — it runs on a **self-hosted runner installed on the CT**, labeled `nostos-ct`.
+
+**One-time setup on the CT:**
+
+```bash
+# GitHub → repo → Settings → Actions → Runners → New self-hosted runner
+# gives you a token; follow its ./config.sh prompts and add the "nostos-ct" label.
+sudo usermod -aG docker $(whoami)   # the runner needs to run `docker compose`
+sudo ./svc.sh install && sudo ./svc.sh start
+```
+
+The runner checks out the repo fresh into its own workspace on every run (separate from
+any manual `git clone` you made in step 5), so keep `.env.prod` **outside** the repo, at
+a fixed path the workflow reads directly — `actions/checkout` deletes untracked files in
+the workspace before each run, which would otherwise wipe it:
+
+```bash
+sudo mkdir -p /opt/nostos
+sudo cp .env.prod /opt/nostos/.env.prod   # from your existing clone, step 5
+sudo chmod 600 /opt/nostos/.env.prod
+```
+
+**Skip a rebuild:** include `[skip docker]` anywhere in the commit message you push to
+`main` (e.g. `chore: update docs [skip docker]`) and the `deploy` job is skipped — `ci`
+still runs.
+
 ## Operating
+
+Deploys to `main` happen automatically via the workflow above. For manual operations from
+your own clone (step 5), keep using its local `.env.prod`:
 
 ```bash
 alias dcp='docker compose -f compose.prod.yml --env-file .env.prod'
 
-dcp up -d --build           # deploy an update (after git pull); migrations run first
+dcp up -d --build           # manual rebuild + deploy; migrations run first
 dcp logs -f api             # logs (rotated automatically)
 dcp exec postgres psql -U nostos nostos
 dcp run --rm migrate        # e.g. after setting ADMIN_* to add another admin

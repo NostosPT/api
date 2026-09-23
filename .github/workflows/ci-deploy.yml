@@ -1,0 +1,83 @@
+name: CI & Deploy
+
+# Every branch and PR must pass `ci` (typecheck + build). `deploy` only runs for
+# pushes to `main`, only after `ci` succeeds, and rebuilds + restarts the
+# production Docker stack on the self-hosted runner at home.
+#
+# Skip the rebuild/deploy for a specific push to main by including
+# `[skip docker]` anywhere in the head commit message.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Typecheck & build
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ci-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # typecheck needs the generated Prisma client's types; it works without a
+      # database (see prisma.config.ts).
+      - run: pnpm db:generate
+
+      - run: pnpm typecheck
+
+      - run: pnpm build
+
+  deploy:
+    name: Rebuild & deploy Docker stack
+    needs: ci
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      !contains(github.event.head_commit.message, '[skip docker]')
+    runs-on: [self-hosted, nostos-ct]
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      # .env.prod lives outside the workspace (see deploy/README.md) so it
+      # survives actions/checkout's clean step and is never written into the repo.
+      - name: Build image and restart the stack
+        run: docker compose -f compose.prod.yml --env-file /opt/nostos/.env.prod up -d --build
+
+      - name: Wait for the API to report healthy
+        run: |
+          set -a; source /opt/nostos/.env.prod; set +a
+          for i in $(seq 1 30); do
+            if curl -fsS "http://${BIND_ADDRESS}:4000/health/ready" >/dev/null; then
+              echo "API is healthy."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API did not become healthy in time." >&2
+          docker compose -f compose.prod.yml --env-file /opt/nostos/.env.prod logs --tail=100 migrate api
+          exit 1
+
+      - name: Prune dangling images
+        if: always()
+        run: docker image prune -f
