@@ -14,6 +14,9 @@ function makeClient(endpoint: string | undefined) {
   const config: S3ClientConfig = {
     region: env.S3_REGION,
     forcePathStyle: env.S3_FORCE_PATH_STYLE,
+    // Otherwise the SDK bakes a checksum of an empty body into presigned PUT URLs,
+    // and the browser's upload is rejected.
+    requestChecksumCalculation: "WHEN_REQUIRED",
     credentials: {
       accessKeyId: env.S3_ACCESS_KEY_ID,
       secretAccessKey: env.S3_SECRET_ACCESS_KEY,
