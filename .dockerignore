@@ -1,0 +1,17 @@
+node_modules
+dist
+src/generated
+.env
+.env.*
+.git
+.github
+.githooks
+.agents
+.claude
+.cursor
+.windsurf
+docker
+*.md
+Dockerfile
+docker-compose.yml
+bundle
