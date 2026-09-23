@@ -71,8 +71,8 @@ Create the **CT**:
 - Debian 12 or 13 template, **unprivileged**.
 - Features: `nesting=1,keyctl=1` (Options → Features, or `pct set <CTID> --features nesting=1,keyctl=1`).
   Docker needs both.
-- Enough disk for photo originals. All data lives in Docker volumes under
-  `/var/lib/docker` inside the CT.
+- Enough disk for photo originals. Photos are stored in `/mnt/Nostos` inside the CT;
+  the database lives in a Docker volume under `/var/lib/docker`.
 
 Inside the CT:
 - Docker Engine and the compose plugin: <https://docs.docker.com/engine/install/debian/>
@@ -197,8 +197,9 @@ dcp run --rm migrate        # e.g. after setting ADMIN_* to add another admin
   ```bash
   dcp exec -T postgres pg_dump -U nostos -Fc nostos > nostos-$(date +%F).dump
   ```
-- Photos: the `nostos-prod_s3-data` volume. Proxmox backups of the CT (vzdump) include
-  it. Keep the pg_dump as well, since a dump restores more reliably than live database files.
+- Photos: `/mnt/Nostos` in the CT. Proxmox backups of the CT (vzdump) include it only if
+  it is on the CT's root disk or a mount point with backup enabled (bind mounts never are).
+  Keep the pg_dump as well, since a dump restores more reliably than live database files.
 
 **Bandwidth:** every image travels home → VPS → visitor, so your home upload speed
 limits how fast photos load. Once display/thumbnail renditions exist, caching them on

@@ -61,7 +61,7 @@ services:
     ports:
       - "${BIND_ADDRESS:?}:8333:8333"
     volumes:
-      - s3-data:/data
+      - /mnt/Nostos:/data
       - ./docker/seaweedfs/entrypoint.sh:/nostos-entrypoint.sh:ro
 
   # Runs before every API (re)start: migrations, bucket creation, first admin.
@@ -96,4 +96,3 @@ services:
 
 volumes:
   postgres-data:
-  s3-data:
