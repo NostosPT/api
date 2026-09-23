@@ -1,0 +1,190 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  PHOTOGRAPHER
+}
+
+/// Staff accounts (admins and photographers). Clients do not have accounts;
+/// they reach their galleries through a slug + access code.
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         Role      @default(PHOTOGRAPHER)
+  bio          String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  sessions     Session[]
+  photos       Photo[]
+}
+
+/// Server-side session. `id` is the SHA-256 of the opaque cookie token,
+/// so a leaked database never yields usable session cookies.
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  userAgent String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ─── Archive ─────────────────────────────────────────────────────────────────
+
+enum Visibility {
+  PUBLIC
+  UNLISTED
+  PRIVATE
+}
+
+enum Availability {
+  NOT_FOR_SALE
+  AVAILABLE
+  SOLD_OUT
+}
+
+model Photo {
+  id             String         @id @default(cuid())
+  /// Public Photo ID, shown as "Nº 482".
+  number         Int            @unique @default(autoincrement())
+  title          String?
+  description    String?
+  /// S3 object keys. The bucket is private; clients get short-lived presigned URLs.
+  originalKey    String         @unique
+  displayKey     String?
+  thumbnailKey   String?
+  width          Int?
+  height         Int?
+  takenAt        DateTime?
+  location       String?
+  category       String?
+  tags           String[]
+  visibility     Visibility     @default(PRIVATE)
+  availability   Availability   @default(NOT_FOR_SALE)
+  priceCents     Int?
+  currency       String         @default("EUR")
+  watermarked    Boolean        @default(false)
+  photographerId String?
+  photographer   User?          @relation(fields: [photographerId], references: [id], onDelete: SetNull)
+  albums         AlbumPhoto[]
+  galleries      GalleryPhoto[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([visibility, category])
+  @@index([photographerId])
+}
+
+/// Public, curated collection of archive photographs.
+model Album {
+  id           String       @id @default(cuid())
+  slug         String       @unique
+  title        String
+  description  String?
+  coverPhotoId String?
+  visibility   Visibility   @default(PRIVATE)
+  publishedAt  DateTime?
+  photos       AlbumPhoto[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model AlbumPhoto {
+  albumId  String
+  photoId  String
+  position Int    @default(0)
+  album    Album  @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  photo    Photo  @relation(fields: [photoId], references: [id], onDelete: Cascade)
+
+  @@id([albumId, photoId])
+  @@index([photoId])
+}
+
+// ─── Studio ──────────────────────────────────────────────────────────────────
+
+model Client {
+  id        String    @id @default(cuid())
+  name      String
+  email     String    @unique
+  phone     String?
+  company   String?
+  notes     String?
+  galleries Gallery[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+/// Commissionable photography services offered by the Studio.
+model Service {
+  id             String    @id @default(cuid())
+  slug           String    @unique
+  name           String
+  description    String?
+  /// Estimated range; not a guaranteed price.
+  priceFromCents Int?
+  priceToCents   Int?
+  currency       String    @default("EUR")
+  active         Boolean   @default(true)
+  position       Int       @default(0)
+  galleries      Gallery[]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+enum GalleryStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// Private delivery gallery for a client (e.g. the result of a Studio commission).
+model Gallery {
+  id             String         @id @default(cuid())
+  /// Unguessable public identifier used in the share link.
+  slug           String         @unique
+  title          String
+  message        String?
+  status         GalleryStatus  @default(DRAFT)
+  /// argon2id hash of the access code handed to the client. Null = link-only access.
+  accessCodeHash String?
+  allowDownload  Boolean        @default(false)
+  expiresAt      DateTime?
+  clientId       String
+  client         Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  serviceId      String?
+  service        Service?       @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  photos         GalleryPhoto[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([clientId])
+}
+
+model GalleryPhoto {
+  galleryId String
+  photoId   String
+  position  Int     @default(0)
+  /// Client favourites / selection for proofing.
+  selected  Boolean @default(false)
+  gallery   Gallery @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  photo     Photo   @relation(fields: [photoId], references: [id], onDelete: Cascade)
+
+  @@id([galleryId, photoId])
+  @@index([photoId])
+}
