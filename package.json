@@ -13,7 +13,7 @@
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
     "storage:init": "tsx scripts/storage-init.ts",
-    "bundle": "esbuild dist/server.js --bundle --platform=node --format=esm --target=node24 --sourcemap --outfile=bundle/server.mjs --external:pg-native --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\""
+    "bundle": "esbuild dist/server.js --bundle --platform=node --format=esm --target=node24 --sourcemap --outfile=bundle/server.mjs --external:pg-native --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" && rm -rf bundle/swagger-ui && cp -R node_modules/@fastify/swagger-ui/static bundle/swagger-ui"
   },
   "license": "UNLICENSED",
   "devEngines": {
