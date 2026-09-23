@@ -12,7 +12,7 @@ through a WireGuard tunnel that the CT dials out to. Nothing is opened on the ho
                          ▼
                     Debian CT at home  (wg 10.8.0.2)
                     └─ Docker: compose.prod.yml
-                         ├─ api       10.8.0.2:3000
+                         ├─ api       10.8.0.2:4000
                          ├─ s3        10.8.0.2:8333   (presigned image URLs)
                          ├─ postgres  internal only
                          └─ migrate   one-shot, runs before each api start
@@ -144,7 +144,7 @@ The first start creates the schema, the bucket and the admin. **Check from the V
 This proves the tunnel and the port binding:
 
 ```bash
-curl http://10.8.0.2:3000/health/ready    # {"status":"ok","checks":{"database":true,"storage":true}}
+curl http://10.8.0.2:4000/health/ready    # {"status":"ok","checks":{"database":true,"storage":true}}
 ```
 
 ## 6. Caddy (VPS)
@@ -209,7 +209,7 @@ the VPS is the natural next step.
 | Symptom | Likely cause |
 | --- | --- |
 | `wg show` in the CT: no handshake | UDP 51820 not open in *both* Oracle firewalls (step 2), wrong `Endpoint` IP, or public keys swapped. |
-| Tunnel pings, but `curl 10.8.0.2:3000` from the VPS fails | Stack not running (`dcp ps`), `BIND_ADDRESS` wrong, or Docker started before `wg0` (step 4 drop-in). |
+| Tunnel pings, but `curl 10.8.0.2:4000` from the VPS fails | Stack not running (`dcp ps`), `BIND_ADDRESS` wrong, or Docker started before `wg0` (step 4 drop-in). |
 | Caddy has no certificate / TLS errors | DNS doesn't point at the VPS yet, or 80/443 blocked in one of the Oracle firewalls. |
 | Small requests work, large uploads or pages hang | MTU. Set `MTU = 1380` under `[Interface]` on both peers and restart `wg-quick@wg0`. |
 | `SignatureDoesNotMatch` on image URLs | `S3_PUBLIC_ENDPOINT` doesn't match the URL the browser uses. |

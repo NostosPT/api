@@ -14,7 +14,7 @@
 
 api.nostos.pt {
 	encode zstd gzip
-	reverse_proxy 10.8.0.2:3000
+	reverse_proxy 10.8.0.2:4000
 }
 
 media.nostos.pt {

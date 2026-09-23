@@ -5,7 +5,7 @@ name: nostos-prod
 #
 #   docker compose -f compose.prod.yml --env-file .env.prod up -d --build
 #
-# Only `api` (3000) and `s3` (8333) are published, and only on BIND_ADDRESS
+# Only `api` (4000) and `s3` (8333) are published, and only on BIND_ADDRESS
 # (the CT's WireGuard/LAN IP). Postgres is never published.
 
 x-restart: &restart
@@ -89,7 +89,7 @@ services:
     environment:
       <<: *api-env
     ports:
-      - "${BIND_ADDRESS:?}:3000:3000"
+      - "${BIND_ADDRESS:?}:4000:3000"
     depends_on:
       migrate:
         condition: service_completed_successfully
