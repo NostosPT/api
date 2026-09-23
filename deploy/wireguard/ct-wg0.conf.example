@@ -1,0 +1,16 @@
+# /etc/wireguard/wg0.conf in the Debian CT (behind home NAT, dials out to the VPS).
+# Replace the <...> placeholders; see deploy/README.md step 3 for generating keys.
+
+[Interface]
+Address = 10.8.0.2/24
+PrivateKey = <CT private key>
+
+# Oracle VPS
+[Peer]
+PublicKey = <VPS public key>
+Endpoint = <VPS public IP>:51820
+# Only tunnel traffic to the VPS; the CT's normal internet traffic is unaffected.
+AllowedIPs = 10.8.0.1/32
+# The VPS opens the connections (Caddy -> API) but can't reach through home NAT on
+# its own, so the CT keeps the NAT mapping alive. No home router port forward needed.
+PersistentKeepalive = 25

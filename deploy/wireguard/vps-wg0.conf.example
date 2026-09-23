@@ -1,0 +1,12 @@
+# /etc/wireguard/wg0.conf on the Oracle VPS (the public end of the tunnel).
+# Replace the <...> placeholders; see deploy/README.md step 3 for generating keys.
+
+[Interface]
+Address = 10.8.0.1/24
+ListenPort = 51820
+PrivateKey = <VPS private key>
+
+# Debian CT running the Nostos stack
+[Peer]
+PublicKey = <CT public key>
+AllowedIPs = 10.8.0.2/32
