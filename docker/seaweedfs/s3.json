@@ -1,9 +1,0 @@
-{
-  "identities": [
-    {
-      "name": "nostos-api",
-      "credentials": [{ "accessKey": "nostos", "secretKey": "nostos-dev-secret" }],
-      "actions": ["Admin", "Read", "List", "Tagging", "Write"]
-    }
-  ]
-}

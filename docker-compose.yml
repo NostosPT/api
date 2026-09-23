@@ -1,6 +1,7 @@
 name: nostos
 
-# Local stack: Postgres + S3-compatible storage (SeaweedFS) + migrations + API.
+# Local development stack: Postgres + S3-compatible storage (SeaweedFS) + migrations + API.
+# For the server (Debian CT behind WireGuard) use compose.prod.yml, see deploy/README.md.
 #   docker compose up --build              -> everything
 #   docker compose up -d postgres s3       -> just the dependencies (for `pnpm dev`)
 
@@ -34,19 +35,24 @@ services:
       timeout: 3s
       retries: 10
 
-  # S3-compatible object storage for local development. In production point
-  # the S3_* variables at AWS S3 (or any S3-compatible provider) instead.
+  # S3-compatible object storage (SeaweedFS). Credentials come from env via
+  # docker/seaweedfs/entrypoint.sh. To use AWS S3 instead, drop this service and
+  # point the S3_* variables at the bucket.
   s3:
-    image: chrislusf/seaweedfs:latest
+    image: chrislusf/seaweedfs:4.47
+    entrypoint: ["/nostos-entrypoint.sh"]
     command: >
-      server -dir=/data -ip=s3 -ip.bind=0.0.0.0
-      -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+      server -ip=s3 -ip.bind=0.0.0.0 -s3 -s3.port=8333
+      -s3.externalUrl=http://localhost:8333
       -s3.allowedOrigins=${CORS_ORIGINS:-http://localhost:5173}
+    environment:
+      S3_ACCESS_KEY_ID: nostos
+      S3_SECRET_ACCESS_KEY: nostos-dev-secret
     ports:
       - "8333:8333"
     volumes:
       - s3-data:/data
-      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+      - ./docker/seaweedfs/entrypoint.sh:/nostos-entrypoint.sh:ro
 
   migrate:
     build:
