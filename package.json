@@ -11,7 +11,9 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "storage:init": "tsx scripts/storage-init.ts",
+    "bundle": "esbuild dist/server.js --bundle --platform=node --format=esm --target=node24 --sourcemap --outfile=bundle/server.mjs --external:pg-native --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\""
   },
   "license": "UNLICENSED",
   "devEngines": {
@@ -30,7 +32,6 @@
     "@fastify/helmet": "^13.1.1",
     "@fastify/rate-limit": "^11.2.0",
     "@fastify/sensible": "^6.0.5",
-    "@node-rs/argon2": "^2.2.1",
     "@prisma/adapter-pg": "7.10.0",
     "@prisma/client": "7.10.0",
     "dotenv": "^18.0.2",
@@ -41,6 +42,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
+    "esbuild": "^0.28.2",
     "prisma": "7.10.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
