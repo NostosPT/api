@@ -13,8 +13,8 @@ Planned production domains (not registered/configured yet, never hard-coded):
 ## Phase 1 — Core archive API
 
 Scope: Auth, Users, Clients, Services, Service Requests, Tags, Categories,
-Photos, Albums, Public Gallery listing, Uploads, Favorites, minimal Purchase,
-AuditLog.
+Photos, Gallery collections, Albums, Public Gallery listing, Uploads,
+Favorites, minimal Purchase, AuditLog.
 
 1. **Foundation** — validated env (`DATABASE_URL`, `COOKIE_SECRET`, S3 vars,
    `ADMIN_*` bootstrap), pino JSON logging with redaction, TypeBox route
@@ -36,9 +36,11 @@ AuditLog.
    staff-confirmed purchases (no provider); upload intent → direct PUT to
    SeaweedFS → verify/finalize; magic-byte + 50 MB; private originals,
    entitlement-derived presigned reads.
-6. **Public Gallery listing** — derived archive query (filters, search, newest/
-   oldest/featured, detail with global copyright); `GET /v1/public/a/:slug`
-   album access with mandatory codes where required, strictly rate-limited.
+6. **Public Gallery collections + album access** — curated `Gallery` /
+   `GalleryPhoto` (membership, order, featured) over two-gate published
+   photos (filters, search, newest/oldest/featured, detail with global
+   copyright); stateless capability album links + codes where required,
+   strictly rate-limited.
 7. **Hardening** — negative/security tests per domain, rate limits, IDOR audit,
    OpenAPI docs.
 
@@ -64,7 +66,8 @@ AuditLog.
   weekly digest scheduler.
 * Full-text search (PostgreSQL FTS / pg_trgm) beyond substring filters.
 * Global dashboard search across IDs (per-domain search is Phase 1).
-* Claim visual-similarity engine (`ClaimSearch` reserved; boundary only).
+* Claim visual-similarity engine (fully deferred — no Phase 1 tables,
+  endpoints, or boundary scaffolding).
 * Analytics event collection (minimal HMAC schema documented; approval needed).
 * 2FA enforcement (TOTP fields reserved; scope undecided).
 
@@ -82,8 +85,8 @@ AuditLog.
   ServiceRequest entity).
 * No payments modelled as three nullable FKs (see financial phase).
 * No `CLIENT` staff role (actors: visitor / client record / staff user).
-* No `Gallery` container entity and no `GalleryPhoto` join (public archive is
-  a derived listing; delivery is `Album`/`AlbumPhoto`).
+* No client-delivery `Gallery` (delivery is `Album`/`AlbumPhoto`; `Gallery` /
+  `GalleryPhoto` are public curation only).
 * No `ClientTag` normalized relation (client labels stay free-form).
 * No single enum mixing persistent/derived access states on `Photo`.
 * No stored aggregate counters or ephemeral storage URLs in the domain.
@@ -91,20 +94,21 @@ AuditLog.
 ## Unresolved decisions (`DECISION REQUIRED`)
 
 1. Public portfolio endpoints in Phase 1 or 2 (site launch dependency)?
-2. Tag model approval: normalized `Tag` + joins, `ClientTag` dropped, client
-   labels free-form?
-3. `GET /v1/services/all` public without auth (site catalogue)?
-4. Failed-login lockout thresholds.
-5. SeaweedFS topology (single vs replicated) and backup story.
-6. Invoice provider choice (invoicexpress/moloni/vendus/toconline).
-7. Resend inbound domain + webhook secret rotation story.
-8. PHOTOGRAPHER photo scope: own photos only (`photographerId` = self) or
+2. `GET /v1/services/all` public without auth (site catalogue)?
+3. SeaweedFS topology (single vs replicated) and backup story.
+4. Invoice provider choice (invoicexpress/moloni/vendus/toconline).
+5. Resend inbound domain + webhook secret rotation story.
+6. PHOTOGRAPHER photo scope: own photos only (`photographerId` = self) or
    archive-wide edit (frontend says "own work" but grants archive edit)?
-9. 2FA scope: optional per-user vs mandatory ADMIN?
-10. Claim vector backend: pgvector vs external embeddings service?
-11. Analytics deferral approval (Phase 2 with documented minimal schema)?
-12. Album access-code mandate: required for published WATERMARK/PAID, optional
-    for FREE?
+7. 2FA scope: optional per-user vs mandatory ADMIN?
+8. Claim vector backend: pgvector vs external embeddings service?
+9. Analytics deferral approval (Phase 2 with documented minimal schema)?
+
+Full format (options, recommended defaults, blockers) in `DECISIONS.md`.
+Resolved into Proposed/Confirmed: tag model, cookie strategy, session
+lifetimes, gallery/album semantics, album-code mandate (B for paid, A for
+FREE), lockout default (5 fails → 15 min backoff), entitlement semantics,
+client deletion.
 
 ## Future architecture considerations
 
