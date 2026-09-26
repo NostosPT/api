@@ -1,9 +1,27 @@
-node_modules
-dist
-bundle
+# Generated directories:
+dist/
+node_modules/
+.vscode/
+
+# Generated files:
+*.tsbuildinfo
+
+# Lockfiles:
+package-lock.json
+
+# Environment Variables:
 .env
 .env.*
-!.env*.example
-.DS_Store
+!.env.example
 
-/src/generated/prisma
+# Logs:
+logs/*.log
+
+# IDE:
+.idea/
+*.swp
+*.swo
+
+# OS:
+.DS_Store
+Thumbs.db

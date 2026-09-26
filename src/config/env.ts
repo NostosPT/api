@@ -1,58 +1,37 @@
-import { z } from "zod";
+import type { EnvConfig, NodeEnvironment } from "../types/config.js";
 
-const bool = z
-  .enum(["true", "false"])
-  .default("false")
-  .transform((v) => v === "true");
+function parseEnvironment(value: string | undefined): NodeEnvironment {
+	if (
+		value === "development" ||
+		value === "production" ||
+		value === "test"
+	) {
+		return value;
+	}
 
-const schema = z.object({
-  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-  HOST: z.string().default("0.0.0.0"),
-  PORT: z.coerce.number().int().default(3000),
-  LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
-  /** Comma-separated list of allowed browser origins (the website / admin). */
-  CORS_ORIGINS: z.string().default("http://localhost:5173"),
-  /**
-   * Which reverse proxies may set X-Forwarded-For. Needed so req.ip (rate limits,
-   * session logs) is the visitor, not the proxy. "false", "true" (trust anyone; avoid),
-   * or a comma-separated list of IPs/CIDRs, e.g. the proxy's WireGuard address "10.8.0.1".
-   */
-  TRUST_PROXY: z
-    .string()
-    .default("false")
-    .transform((v): boolean | string[] => {
-      if (v === "true") return true;
-      if (v === "false" || v === "") return false;
-      return v.split(",").map((s) => s.trim());
-    }),
-
-  DATABASE_URL: z.url(),
-
-  /** Used to sign gallery-access cookies. Min 32 chars. */
-  COOKIE_SECRET: z.string().min(32),
-  SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30),
-  /** Set to true behind HTTPS (production). */
-  COOKIE_SECURE: bool,
-
-  S3_REGION: z.string().default("eu-west-1"),
-  S3_BUCKET: z.string(),
-  S3_ACCESS_KEY_ID: z.string(),
-  S3_SECRET_ACCESS_KEY: z.string(),
-  /** Custom endpoint for S3-compatible storage (MinIO locally). Leave empty for AWS. */
-  S3_ENDPOINT: z.string().optional(),
-  /** Endpoint used when signing URLs for browsers, if it differs from S3_ENDPOINT
-   *  (e.g. API talks to http://minio:9000 inside Docker, browser uses http://localhost:9000). */
-  S3_PUBLIC_ENDPOINT: z.string().optional(),
-  S3_FORCE_PATH_STYLE: bool,
-  S3_URL_TTL_SECONDS: z.coerce.number().int().positive().default(900),
-});
-
-export type Env = z.infer<typeof schema>;
-
-const parsed = schema.safeParse(process.env);
-if (!parsed.success) {
-  console.error("Invalid environment variables:\n" + z.prettifyError(parsed.error));
-  process.exit(1);
+	return "development";
 }
 
-export const env: Env = parsed.data;
+function parsePort(value: string | undefined): number {
+	const port = Number.parseInt(value ?? "3000", 10);
+
+	if (!Number.isInteger(port) || port < 1 || port > 65535) {
+		throw new Error("Invalid PORT configuration");
+	}
+
+	return port;
+}
+
+export function validateEnv(): EnvConfig {
+	const corsOrigins = (process.env.CORS_ORIGINS ?? "")
+		.split(",")
+		.map((origin) => origin.trim())
+		.filter(Boolean);
+
+	return {
+		NODE_ENV: parseEnvironment(process.env.NODE_ENV),
+		HOST: process.env.HOST ?? "127.0.0.1",
+		PORT: parsePort(process.env.PORT),
+		CORS_ORIGINS: corsOrigins,
+	};
+}
