@@ -432,7 +432,7 @@ finalize; object naming `originals/{uuid}-{slugified}` and derivatives
 | Minimal Purchase/entitlement | Purchase | `/v1/purchases` (staff-confirmed) | 1 | Proposed |
 | Provider payments, Documents, Orders, Email | Phase 2 entities | Phase 2 areas | 2 | Deferred |
 | Onboarding (core + answers JSONB) | ServiceRequest | `/v1/requests`, public intake | 1 | Confirmed + Proposed |
-| Claim (fully deferred, incl. boundary) | `ClaimSearch` (Phase 2) | reserved | 2 | Deferred + Decision Required (vector backend) |
+| Claim (fully deferred, no P1 scaffolding) | `ClaimSearch` (Phase 2) | reserved | 2 | Deferred + Decision Required (vector backend) |
 | Analytics (+privacy controls) | `AnalyticsEvent` (Phase 2, no P1 tables) | reserved | 2 (Proposed) | Deferred (approval) |
 | 2FA | (reserved TOTP fields) | login enforcement | Later | Decision Required |
 | AuditLog | AuditLog | append-only, all domains | 1 | Confirmed |
