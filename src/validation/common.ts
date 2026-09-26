@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 import type { Static } from "typebox";
+import type { Role, UserStatus } from "@prisma/client";
 
 const UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
@@ -16,3 +17,26 @@ export const PaginationQuery = Type.Object({
 });
 
 export type PaginationQuery = Static<typeof PaginationQuery>;
+
+// Shared primitives. Email uses a pattern (not `format: "email"`) so
+// validation works without ajv-formats.
+export const EmailString = Type.String({
+	pattern: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+	maxLength: 254,
+});
+
+export const PasswordString = Type.String({ minLength: 12, maxLength: 128 });
+
+export const RoleEnum = Type.Union(
+	(["ADMIN", "PHOTOGRAPHER", "EDITOR", "ASSISTANT", "ACCOUNTANT"] as Role[]).map((role) =>
+		Type.Literal(role),
+	),
+);
+
+export const UserStatusEnum = Type.Union(
+	(["ACTIVE", "SUSPENDED"] as UserStatus[]).map((status) => Type.Literal(status)),
+);
+
+export function normalizeEmail(email: string): string {
+	return email.trim().toLowerCase();
+}

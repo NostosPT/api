@@ -65,28 +65,41 @@ export async function findSessionUser(token: string): Promise<AuthenticatedUser 
 
 	const session = await prisma.session.findUnique({
 		where: { tokenHash },
-		include: {
-			user: {
-				select: {
-					id: true,
-					email: true,
-					name: true,
-					role: true,
-					status: true,
-				},
-			},
+	});
+
+	// Loose null check: real rows carry NULL, never undefined.
+	if (session === null || session.revokedAt != null || session.expiresAt <= new Date()) {
+		return null;
+	}
+
+	const user = await prisma.user.findUnique({
+		where: { id: session.userId },
+		select: {
+			id: true,
+			email: true,
+			name: true,
+			role: true,
+			status: true,
 		},
 	});
 
-	if (session === null || session.revokedAt !== null || session.expiresAt <= new Date()) {
+	if (user === null || user.status !== "ACTIVE") {
 		return null;
 	}
 
-	if (session.user.status !== "ACTIVE") {
-		return null;
-	}
+	return user;
+}
 
-	return session.user;
+// Lazy idle renewal: refreshes lastSeenAt only when the session is stale
+// (past 75% of the idle window is handled by the caller passing the cutoff).
+// Single conditional write — no per-request database churn.
+export async function touchSession(tokenHash: string, idleSeconds: number): Promise<void> {
+	const staleBefore = new Date(Date.now() - idleSeconds * 750);
+
+	await prisma.session.updateMany({
+		where: { tokenHash, revokedAt: null, lastSeenAt: { lt: staleBefore } },
+		data: { lastSeenAt: new Date() },
+	});
 }
 
 // Revokes a single session by raw token. Idempotent.

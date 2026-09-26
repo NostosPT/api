@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { AppConfig } from "../types/config.js";
 
 import { registerCompression } from "./compression.js";
+import { registerCookies } from "./cookies.js";
 import { registerCors } from "./cors.js";
 import { registerErrorHandler } from "./errorHandler.js";
 import { registerHeaders } from "./headers.js";
@@ -10,6 +11,7 @@ import { registerRequestId } from "./requestId.js";
 import { registerSwagger } from "./swagger.js";
 
 export async function registerMiddleware(app: FastifyInstance, config: AppConfig): Promise<void> {
+	await registerCookies(app, config);
 	await registerCors(app, config);
 	await registerHeaders(app);
 	await registerRateLimit(app, config);

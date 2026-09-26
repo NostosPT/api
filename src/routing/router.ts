@@ -3,6 +3,8 @@ import type {
 	FastifyReply,
 	FastifyRequest,
 	FastifySchema,
+	RouteShorthandOptions,
+	preHandlerHookHandler,
 } from "fastify";
 
 import type { HttpMethod } from "../types/routes.js";
@@ -19,6 +21,8 @@ type RouteHandler = (
 
 interface RouteOptions {
 	schema?: FastifySchema;
+	config?: RouteShorthandOptions["config"];
+	preHandler?: preHandlerHookHandler | preHandlerHookHandler[];
 }
 
 interface Route extends RouteOptions {
@@ -50,6 +54,8 @@ export function createRouter(): Router {
 			path,
 			handler,
 			schema: options?.schema,
+			config: options?.config,
+			preHandler: options?.preHandler,
 		});
 	};
 
@@ -71,6 +77,8 @@ export function createRouter(): Router {
 					method: route.method,
 					url: routePath,
 					schema: route.schema,
+					config: route.config,
+					preHandler: route.preHandler,
 					handler: async (request, reply) => {
 						const result = await route.handler(request, reply);
 
