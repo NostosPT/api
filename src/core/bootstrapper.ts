@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { createApp } from "../app.js";
 import { loadConfig } from "../config/index.js";
+import { disconnectPrisma } from "../db/prisma.js";
 import * as logger from "../logging/logger.js";
 import { HttpServer } from "./httpServer.js";
 import { ShutdownManager } from "./shutdown.js";
@@ -31,6 +32,7 @@ export class Bootstrapper {
 		);
 
 		ShutdownManager.register(() => httpServer.stop());
+		ShutdownManager.register(() => disconnectPrisma());
 
 		const totalDuration = Math.round(performance.now() - totalStart);
 

@@ -5,6 +5,9 @@
 	"main": "dist/index.js",
 	"type": "module",
 	"packageManager": "pnpm@10.15.0",
+	"pnpm": {
+		"onlyBuiltDependencies": ["argon2"]
+	},
 	"engines": {
 		"node": "22.18.0",
 		"pnpm": "10.15.0",
@@ -16,7 +19,8 @@
 		"dev": "tsx watch src/index.ts",
 		"lint": "eslint src",
 		"lint:fix": "eslint src --fix",
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run"
 	},
 	"repository": {
 		"type": "git",
@@ -40,19 +44,30 @@
 	"homepage": "https://github.com/ressiws/typescript-webserver-template#readme",
 	"dependencies": {
 		"@fastify/compress": "9.2.0",
+		"@fastify/cookie": "^11.1.2",
 		"@fastify/cors": "11.3.0",
 		"@fastify/helmet": "13.1.1",
 		"@fastify/rate-limit": "11.2.0",
 		"@fastify/swagger": "9.8.1",
 		"@fastify/swagger-ui": "6.1.1",
-		"fastify": "5.12.1"
+		"@fastify/type-provider-typebox": "^6.1.0",
+		"@prisma/adapter-pg": "^7.10.0",
+		"@prisma/client": "^7.10.0",
+		"argon2": "^0.45.1",
+		"fastify": "5.12.1",
+		"pg": "^8.23.0",
+		"pino": "^10.3.1",
+		"typebox": "^1.3.34"
 	},
 	"devDependencies": {
 		"@types/node": "22.20.1",
+		"@types/pg": "^8.23.1",
 		"@typescript-eslint/eslint-plugin": "8.68.0",
 		"@typescript-eslint/parser": "8.68.0",
 		"eslint": "10.9.1",
+		"prisma": "^7.10.0",
 		"tsx": "4.23.12",
-		"typescript": "5.9.3"
+		"typescript": "5.9.3",
+		"vitest": "^5.0.2"
 	}
 }

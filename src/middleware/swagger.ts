@@ -1,8 +1,13 @@
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import type { FastifyInstance } from "fastify";
+import type { AppConfig } from "../types/config.js";
 
-export async function registerSwagger(app: FastifyInstance): Promise<void> {
+export async function registerSwagger(app: FastifyInstance, config: AppConfig): Promise<void> {
+	if (!config.env.DOCS_ENABLED) {
+		return;
+	}
+
 	await app.register(swagger, {
 		openapi: {
 			openapi: "3.0.3",
