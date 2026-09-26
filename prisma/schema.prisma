@@ -47,6 +47,9 @@ enum LeadSource {
   ARCHIVE
 }
 
+// INVOICE and ORDER are long-term timeline vocabulary only — no Invoice/Order
+// models exist in Phase 1. Kept deliberately to avoid a later enum migration;
+// they label references to Phase 2 records, nothing more.
 enum ActivityKind {
   NOTE
   EMAIL
@@ -211,7 +214,6 @@ model Client {
   company       String?
   notes         String?
   status        ClientStatus @default(LEAD)
-  tags          String[] // free-form labels — NOT the normalized Tag model
   taxId         String? // NIF, format-validated app-side
   address       String?
   source        LeadSource?
@@ -265,6 +267,9 @@ model Service {
   requests ServiceRequest[]
 }
 
+// Public intake flow: find-or-create Client by required contact email first,
+// then create the request. clientId stays REQUIRED — anonymous submissions
+// without an identified client are not supported.
 model ServiceRequest {
   id               String              @id @default(uuid()) @db.Uuid
   reference        String              @unique // e.g. REQ-2026-031, transactional sequence
@@ -390,12 +395,14 @@ model Photo {
   height         Int?
   takenAt        DateTime?
   location       String?
-  status         PhotoStatus  @default(DRAFT) // DRAFT → APPROVED → PUBLISHED; public needs PUBLISHED + PUBLIC
+  // Publication invariant: a photo is publicly listed IFF status = PUBLISHED
+  // AND visibility = PUBLIC. PUBLISHED + PRIVATE = staged but unexposed;
+  // APPROVED + PUBLIC = not yet listed. No other combination exposes publicly.
+  status         PhotoStatus  @default(DRAFT) // DRAFT → APPROVED → PUBLISHED, forward-only, transitions logged
   visibility     Visibility   @default(PRIVATE)
   availability   Availability @default(NOT_FOR_SALE)
   priceCents     Int?
   currency       String       @default("EUR")
-  watermarked    Boolean      @default(false)
   photographerId String?      @db.Uuid
   photographer   User?        @relation("PhotoPhotographer", fields: [photographerId], references: [id], onDelete: SetNull)
   uploadStatus   UploadStatus @default(PENDING) // lifecycle, not access state
@@ -407,8 +414,7 @@ model Photo {
   galleryEntries  GalleryPhoto[]
   albumEntries    AlbumPhoto[]
   albumsCovered   Album[]         @relation("AlbumCover")
-  favorites       Favorite[]
-  purchases       Purchase[]      @relation("PurchasePhoto")
+  purchaseEntries PurchasePhoto[]
 
   // public listing reads (status, visibility); trigram name/title search in migration SQL
   @@index([status, visibility, createdAt(sort: Desc)])
@@ -477,7 +483,6 @@ model Album {
 
   photos    AlbumPhoto[]
   tags      AlbumTag[]
-  favorites Favorite[]
   purchases Purchase[] @relation("PurchaseAlbum")
 
   @@index([clientId, status])
@@ -492,6 +497,8 @@ model AlbumPhoto {
   isPreview Boolean  @default(true) // PAID: visible subset; forced true for WATERMARK/FREE
   addedAt   DateTime @default(now())
 
+  favorites Favorite[]
+
   @@id([albumId, photoId])
   @@unique([albumId, position])
   @@index([photoId])
@@ -501,40 +508,63 @@ model AlbumPhoto {
 // Favorites (client-scoped) and minimal Purchases (no provider)
 // ---------------------------------------------------------------------------
 
+// Favorite targets an AlbumPhoto row (composite FK), so the database itself
+// guarantees the (album, photo) pair exists in that album — no orphan
+// favorites, no redundant membership copy. Removing a photo from an album
+// cascades its favorites (membership ended); album expiry only gates reads.
+// Per-photo visibility and purchase checks remain app-side.
 model Favorite {
-  id        String   @id @default(uuid()) @db.Uuid
-  clientId  String   @db.Uuid
-  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  albumId   String   @db.Uuid
-  album     Album    @relation(fields: [albumId], references: [id], onDelete: Cascade)
-  photoId   String   @db.Uuid
-  photo     Photo    @relation(fields: [photoId], references: [id], onDelete: Restrict)
-  createdAt DateTime @default(now())
+  id         String     @id @default(uuid()) @db.Uuid
+  clientId   String     @db.Uuid
+  client     Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  albumId    String     @db.Uuid
+  photoId    String     @db.Uuid
+  albumEntry AlbumPhoto @relation(fields: [albumId, photoId], references: [albumId, photoId], onDelete: Cascade)
+  createdAt  DateTime   @default(now())
 
   @@unique([clientId, albumId, photoId])
-  @@index([albumId, createdAt])
+  @@index([clientId])
 }
 
+// Purchase scope mapping (enforced app-side, exactly one shape per scope):
+// - PHOTO: albumId null, exactly 1 PurchasePhoto row.
+// - PACK: albumId null, ≥1 PurchasePhoto rows frozen at completion.
+// - ALBUM: albumId set, PurchasePhoto rows materialized for the members at
+//   completion (frozen snapshot — later-added album photos need a new grant).
+// Only COMPLETED rows grant entitlement; FAILED/REFUNDED revoke automatically
+// because entitlement is derived. No provider fields — Purchase ≠ Payment.
 model Purchase {
-  id             String         @id @default(uuid()) @db.Uuid
-  clientId       String         @db.Uuid
-  client         Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  scope          PurchaseScope
-  photoId        String?        @db.Uuid // set when scope = PHOTO
-  photo          Photo?         @relation("PurchasePhoto", fields: [photoId], references: [id], onDelete: Restrict)
-  albumId        String?        @db.Uuid // set when scope = ALBUM
-  album          Album?         @relation("PurchaseAlbum", fields: [albumId], references: [id], onDelete: Restrict)
-  packPhotoIds   Json?          @db.JsonB // PHOTO-id snapshot when scope = PACK
-  priceCents     Int
-  currency       String         @default("EUR")
-  status         PurchaseStatus @default(PENDING) // staff-confirmed; only COMPLETED grants entitlement
-  note           String?
-  completedAt    DateTime?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  id          String         @id @default(uuid()) @db.Uuid
+  clientId    String         @db.Uuid
+  client      Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  scope       PurchaseScope
+  albumId     String?        @db.Uuid // set when scope = ALBUM
+  album       Album?         @relation("PurchaseAlbum", fields: [albumId], references: [id], onDelete: Restrict)
+  priceCents  Int
+  currency    String         @default("EUR")
+  status      PurchaseStatus @default(PENDING) // staff-confirmed; only COMPLETED grants entitlement
+  note        String?
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  items PurchasePhoto[]
 
   @@index([clientId, status, createdAt(sort: Desc)])
   @@index([albumId])
+}
+
+// Relational purchase-photo association — the authoritative grant record.
+// Rows are written once at completion and never updated: the immutable history
+// of exactly which photos a purchase unlocked. No unvalidated JSON array.
+model PurchasePhoto {
+  purchaseId String   @db.Uuid
+  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  photoId    String   @db.Uuid
+  photo      Photo    @relation(fields: [photoId], references: [id], onDelete: Restrict)
+  addedAt    DateTime @default(now())
+
+  @@id([purchaseId, photoId])
   @@index([photoId])
 }
 
