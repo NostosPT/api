@@ -128,7 +128,12 @@ attempts are strictly rate-limited per album + IP. Favorites, purchase, and
 download endpoints all require (capability + code-if-set + unexpired album).
 No `AlbumAccess`/`AlbumAccessToken`/`AlbumSession` rows in Phase 1 — nothing
 to store, nothing to leak; persistent device sessions (if ever needed) are a
-Phase 2 consideration. **Proposed**, needs approval.
+Phase 2 consideration. Validated: revoke (rotation), expiry (`exp` +
+`expiresAt`), rotation, favorites (independent rows), purchase link
+(`albumId`), downloads (per-request check) all hold. One honest limitation:
+stateless access yields no per-visit identity log — mitigated by failed-code
+audit events plus cheap `Album.views`/`lastViewedAt` counters; identity-level
+visit history waits for Phase 2 analytics. **Proposed**, needs approval.
 
 ### §2d. Album code: recommended B for paid, A for FREE (Option C rejected)
 
@@ -151,7 +156,8 @@ is enumerable. Recommendation: **B for WATERMARK/PAID, A for FREE**.
 * **AlbumPhoto**: `position`, `isPreview` (PAID: which subset is visible;
   forced true for all rows when type is WATERMARK/FREE), `addedAt`.
 * **Purchase** (minimal, §7): scope PHOTO|PACK|ALBUM with price snapshot.
-* **Entitlement (derived, §5)**: which photos are final/downloadable.
+* **Entitlement (derived, §6b)**: which photos are final/downloadable —
+  no table in Phase 1 (case analysis below proves sufficiency).
 
 WATERMARK: all visible, all watermarked, favorites on, single/pack/full
 purchase → purchased photos final. PAID: only `isPreview` subset visible
@@ -212,6 +218,22 @@ Purchase ≠ Payment ≠ Entitlement
   materialize entitlements for performance (deferred consideration, not need).
 * Aggregates on the client page (latest purchase, total spent, photos/albums
   purchased) are derived queries, never stored counters.
+
+### §6b. Entitlement case analysis (validates the no-table model)
+
+| Case | Derived result | Safe? |
+|---|---|---|
+| Buy photo A | COMPLETED `Purchase(PHOTO, photoId=A)` → A final/downloadable | Yes |
+| Buy pack A+B+C | snapshot list → each member final | Yes |
+| Buy full album | current membership at read time → all final (**Proposed**: later-added photos included) | Yes |
+| Failed payment | status ≠ COMPLETED → excluded | Yes |
+| Cancelled/refunded | status change → access lost automatically; already-downloaded files cannot be retrieved (stated limit, not a flaw) | Yes |
+| Photo removed from album | album-scope cover ends; direct/pack purchases of it remain valid | Yes |
+| Photo "deleted" | hard delete forbidden while purchases/favorites reference it (RESTRICT + guard); withdrawal = unpublish, row retained, purchase record immutable; files retained while any COMPLETED purchase references the photo | Yes |
+
+Verdict: the derived model represents every case without an entitlement
+table. The only accepted cost is read-time joins (materialize in Phase 2 if
+measured slow — deferred, not needed now).
 
 ## 7. Tags & Categories
 
