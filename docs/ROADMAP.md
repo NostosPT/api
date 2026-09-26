@@ -12,8 +12,9 @@ Planned production domains (not registered/configured yet, never hard-coded):
 
 ## Phase 1 — Core archive API
 
-Scope: Auth, Users, Clients, Services, Service Requests, Tags, Photos, Albums,
-Gallery, Uploads.
+Scope: Auth, Users, Clients, Services, Service Requests, Tags, Categories,
+Photos, Albums, Public Gallery listing, Uploads, Favorites, minimal Purchase,
+AuditLog.
 
 1. **Foundation** — validated env (`DATABASE_URL`, `COOKIE_SECRET`, S3 vars,
    `ADMIN_*` bootstrap), pino JSON logging with redaction, TypeBox route
@@ -22,17 +23,22 @@ Gallery, Uploads.
    `package.json` / `Dockerfile` / CI.
 2. **Database** — Prisma v7 + PostgreSQL greenfield, initial migration, seed
    (admin user, 6 catalogue services, base tags/categories).
-3. **Auth + Users** — API-owned opaque sessions (256-bit token, SHA-512 hash in
-   DB), Argon2id passwords, 5 roles + permission matrix enforcement, invites.
-4. **Clients + Services + Service Requests + Tags** — CRUD, lifecycle
-   NEW→…→COMPLETED/LOST, notes, normalized tags.
-5. **Photos + Albums + Uploads** — upload intent → direct PUT to SeaweedFS
-   (S3-compatible) → verify/finalize → register metadata; magic-byte + 50 MB
-   validation; private originals, presigned reads.
-6. **Gallery** — private client delivery (never public portfolio): slug +
-   mandatory hashed access code for published galleries, publish lifecycle,
-   `GET /v1/public/g/:slug` requiring the access code (slug alone grants
-   nothing), strictly rate-limited code attempts.
+3. **Auth + Users + AuditLog** — API-owned opaque sessions (30d absolute,
+   7d idle, max 10, SHA-512 hash in DB), Argon2id passwords, 5 roles +
+   permission matrix enforcement, invites, append-only audit log.
+4. **Clients + Services + Service Requests + Tags + Categories** — CRUD,
+   client codes, timelines, lifecycle NEW→…→COMPLETED/LOST, notes, normalized
+   tags with PUBLIC/INTERNAL visibility, curated categories (never enums),
+   onboarding core + answers JSONB.
+5. **Photos + Albums + Uploads + Favorites + minimal Purchase** — photo
+   `status` publishing workflow (two-gate public visibility); client-owned
+   albums (`WATERMARK|PAID|FREE`) with slug + access codes and favorites;
+   staff-confirmed purchases (no provider); upload intent → direct PUT to
+   SeaweedFS → verify/finalize; magic-byte + 50 MB; private originals,
+   entitlement-derived presigned reads.
+6. **Public Gallery listing** — derived archive query (filters, search, newest/
+   oldest/featured, detail with global copyright); `GET /v1/public/a/:slug`
+   album access with mandatory codes where required, strictly rate-limited.
 7. **Hardening** — negative/security tests per domain, rate limits, IDOR audit,
    OpenAPI docs.
 
@@ -57,6 +63,10 @@ Gallery, Uploads.
   success follow-ups/automations/feedback, team settings UI backing,
   weekly digest scheduler.
 * Full-text search (PostgreSQL FTS / pg_trgm) beyond substring filters.
+* Global dashboard search across IDs (per-domain search is Phase 1).
+* Claim visual-similarity engine (`ClaimSearch` reserved; boundary only).
+* Analytics event collection (minimal HMAC schema documented; approval needed).
+* 2FA enforcement (TOTP fields reserved; scope undecided).
 
 ## Intentionally excluded functionality
 
@@ -71,11 +81,18 @@ Gallery, Uploads.
 * No `ClientServices` N:N as the service relationship (replaced by
   ServiceRequest entity).
 * No payments modelled as three nullable FKs (see financial phase).
+* No `CLIENT` staff role (actors: visitor / client record / staff user).
+* No `Gallery` container entity and no `GalleryPhoto` join (public archive is
+  a derived listing; delivery is `Album`/`AlbumPhoto`).
+* No `ClientTag` normalized relation (client labels stay free-form).
+* No single enum mixing persistent/derived access states on `Photo`.
+* No stored aggregate counters or ephemeral storage URLs in the domain.
 
 ## Unresolved decisions (`DECISION REQUIRED`)
 
 1. Public portfolio endpoints in Phase 1 or 2 (site launch dependency)?
-2. Tag model: single `Tag` table with scope vs separate photo/client tags?
+2. Tag model approval: normalized `Tag` + joins, `ClientTag` dropped, client
+   labels free-form?
 3. `GET /v1/services/all` public without auth (site catalogue)?
 4. Failed-login lockout thresholds.
 5. SeaweedFS topology (single vs replicated) and backup story.
@@ -83,6 +100,11 @@ Gallery, Uploads.
 7. Resend inbound domain + webhook secret rotation story.
 8. PHOTOGRAPHER photo scope: own photos only (`photographerId` = self) or
    archive-wide edit (frontend says "own work" but grants archive edit)?
+9. 2FA scope: optional per-user vs mandatory ADMIN?
+10. Claim vector backend: pgvector vs external embeddings service?
+11. Analytics deferral approval (Phase 2 with documented minimal schema)?
+12. Album access-code mandate: required for published WATERMARK/PAID, optional
+    for FREE?
 
 ## Future architecture considerations
 
