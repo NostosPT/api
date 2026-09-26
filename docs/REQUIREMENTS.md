@@ -62,9 +62,14 @@ Status legend used throughout:
 ## 2. Gallery vs Album (reconciled — replaces previous semantics)
 
 ```text
-Public Gallery  →  Nostos public portfolio (derived listing, no owner)
+Public Gallery  →  Nostos public portfolio (curated collection, Model B)
 Client → Album (WATERMARK | PAID | FREE)  →  client delivery
 ```
+
+Terminology (binding): **Gallery** is the public Nostos photo archive.
+**Album** is private client delivery. **"Portfolio" is a product/marketing
+term for the public-gallery experience — it is not an entity and no
+`Portfolio` table will be created** unless a real requirement demands it.
 
 * **Gallery is a curated public collection (Model B — challenged and
   re-decided, see §2b).** It owns membership, ordering, and featured flags;
@@ -98,9 +103,8 @@ Seeded default collection: `archive`. Copyright stays global (no duplication).
 reasons, not a guess: do not preserve Gallery merely from history, and do not
 drop it merely because a query suffices today.
 * **Album** belongs to exactly one Client (`clientId NOT NULL`, `RESTRICT` on
-  client delete). It is the only client-delivery container. Public portfolio
-  collections, if ever needed as entities, reuse the public Gallery concept —
-  albums are never public portfolios.
+  client delete). It is the only client-delivery container — albums are never
+  public portfolios; public collections are `Gallery` rows.
 
 ### Album ownership & access
 
