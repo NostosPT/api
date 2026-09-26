@@ -1,39 +1,51 @@
-# syntax=docker/dockerfile:1
+# ---- Stage 1: Install dependencies ----
+FROM node:20-alpine AS deps
 
-ARG NODE_VERSION=24
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# ─── base: node + pnpm ───────────────────────────────────────────────────────
-FROM node:${NODE_VERSION}-alpine AS base
-ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH
-RUN npm install -g pnpm@11
 WORKDIR /app
 
-# ─── deps: full install (dev deps needed for build, prisma CLI, tsx) ─────────
-FROM base AS deps
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+COPY package.json pnpm-lock.yaml ./
 
-# ─── build: generate Prisma client, compile TypeScript, bundle ───────────────
-FROM deps AS build
-COPY tsconfig.json prisma.config.ts ./
-COPY prisma ./prisma
+RUN pnpm install --frozen-lockfile
+
+# ---- Stage 2: Build ----
+FROM node:20-alpine AS build
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json tsconfig.json ./
 COPY src ./src
-# The bundle inlines every dependency (incl. Prisma's query compiler), so the
-# runtime image needs no node_modules at all.
-RUN pnpm build && pnpm bundle
 
-# ─── migrate: one-shot job that applies migrations, seeds and prepares storage
-FROM build AS migrate
-COPY scripts ./scripts
-CMD ["sh", "-c", "pnpm db:deploy && pnpm storage:init && ([ -z \"$ADMIN_EMAIL\" ] || pnpm db:seed)"]
+RUN pnpm build
 
-# ─── runtime: small image, non-root ──────────────────────────────────────────
-FROM node:${NODE_VERSION}-alpine AS runtime
-ENV NODE_ENV=production
+# ---- Stage 3: Production ----
+FROM node:20-alpine AS production
+
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -S appuser -u 1001 -G appgroup
+
 WORKDIR /app
-COPY --from=build /app/bundle ./bundle
-USER node
+
+COPY package.json pnpm-lock.yaml ./
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN pnpm install --frozen-lockfile --prod
+
+COPY --from=build /app/dist ./dist
+
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV PORT=3000
+
 EXPOSE 3000
-HEALTHCHECK --interval=15s --timeout=3s --start-period=10s \
-  CMD wget -qO- http://127.0.0.1:3000/health/live || exit 1
-CMD ["node", "--enable-source-maps", "bundle/server.mjs"]
+
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -qO- http://localhost:3000/v1/health || exit 1
+
+CMD ["node", "dist/index.js"]
