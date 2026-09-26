@@ -395,10 +395,14 @@ model Photo {
   height         Int?
   takenAt        DateTime?
   location       String?
-  // Publication invariant: a photo is publicly listed IFF status = PUBLISHED
-  // AND visibility = PUBLIC. PUBLISHED + PRIVATE = staged but unexposed;
-  // APPROVED + PUBLIC = not yet listed. No other combination exposes publicly.
-  status         PhotoStatus  @default(DRAFT) // DRAFT → APPROVED → PUBLISHED, forward-only, transitions logged
+  // Publication invariant: public gallery exposure requires ALL of
+  // Photo.status = PUBLISHED AND Photo.visibility = PUBLIC AND membership in
+  // a GalleryPhoto AND the containing Gallery.status = PUBLISHED.
+  // PUBLISHED + PRIVATE = staged but unexposed; APPROVED + PUBLIC = not yet
+  // listed. Unpublish is supported: PUBLISHED returns to DRAFT (or visibility
+  // to PRIVATE) via an explicit, logged operation — transitions are not
+  // forward-only.
+  status         PhotoStatus  @default(DRAFT) // DRAFT → APPROVED → PUBLISHED, transitions logged
   visibility     Visibility   @default(PRIVATE)
   availability   Availability @default(NOT_FOR_SALE)
   priceCents     Int?
@@ -526,20 +530,23 @@ model Favorite {
   @@index([clientId])
 }
 
-// Purchase scope mapping (enforced app-side, exactly one shape per scope):
-// - PHOTO: albumId null, exactly 1 PurchasePhoto row.
-// - PACK: albumId null, ≥1 PurchasePhoto rows frozen at completion.
-// - ALBUM: albumId set, PurchasePhoto rows materialized for the members at
-//   completion (frozen snapshot — later-added album photos need a new grant).
-// Only COMPLETED rows grant entitlement; FAILED/REFUNDED revoke automatically
-// because entitlement is derived. No provider fields — Purchase ≠ Payment.
+// Purchase scope mapping (enforced app-side): every Phase 1 purchase is
+// album-contextual — albumId is REQUIRED.
+// - PHOTO: exactly 1 PurchasePhoto row.
+// - PACK: ≥1 PurchasePhoto rows frozen at completion.
+// - ALBUM: PurchasePhoto rows materialized for the members at completion
+//   (frozen snapshot — later-added album photos need a new grant).
+// Album-less purchases (claim-style, no album context) are a future/P2
+// concern and are NOT representable here. Only COMPLETED rows grant
+// entitlement; FAILED/REFUNDED revoke automatically because entitlement is
+// derived. No provider fields — Purchase ≠ Payment.
 model Purchase {
   id          String         @id @default(uuid()) @db.Uuid
   clientId    String         @db.Uuid
   client      Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
   scope       PurchaseScope
-  albumId     String?        @db.Uuid // set when scope = ALBUM
-  album       Album?         @relation("PurchaseAlbum", fields: [albumId], references: [id], onDelete: Restrict)
+  albumId     String         @db.Uuid
+  album       Album          @relation("PurchaseAlbum", fields: [albumId], references: [id], onDelete: Restrict)
   priceCents  Int
   currency    String         @default("EUR")
   status      PurchaseStatus @default(PENDING) // staff-confirmed; only COMPLETED grants entitlement
