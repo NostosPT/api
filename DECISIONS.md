@@ -189,32 +189,38 @@ scoping to be fixed at implementation.
 
 ## Unresolved (`DECISION REQUIRED` — genuine owner choices only)
 
-1. **2FA scope.** Why: determines login flow and ADMIN onboarding risk.
+Pre-schema classification: **A** = schema blocker (decide before Prisma) ·
+**B** = Phase 1 implementation decision (schema safe, decide before that
+feature) · **C** = Phase 2 decision (stays deferred, no questions asked).
+Result: **zero A items** — nothing blocks Prisma schema creation (even
+PHOTOGRAPHER scope is app-logic over the existing `photographerId`).
+
+[C] 1. **2FA scope.** Why: determines login flow and ADMIN onboarding risk.
    A: optional per-user. B: mandatory ADMIN. Recommended default: B.
    Blocking: auth implementation details.
-2. **PHOTOGRAPHER photo scope.** Why: "own work" vs archive-wide edit
+[B] 2. **PHOTOGRAPHER photo scope.** Why: "own work" vs archive-wide edit
    conflict in current frontend. A: own photos only. B: archive-wide.
    Recommended default: none — real conflict, owner decides. Blocking:
    photo/albums authorization rules.
-3. **Claim vector backend.** Why: pgvector keeps data local; external
+[C] 3. **Claim vector backend.** Why: pgvector keeps data local; external
    service offloads ops but moves images out. A: pgvector. B: external
    embeddings. Recommended default: A (self-hosted posture). Blocking:
    Phase 2 Claim design only.
-4. **Analytics deferral.** Why: privacy surface vs dashboard metrics appetite.
+[C] 4. **Analytics deferral.** Why: privacy surface vs dashboard metrics appetite.
    A: defer to Phase 2 (recommended). B: minimal Phase 1 events. Blocking:
    nothing in Phase 1 either way.
-5. **Public portfolio endpoints timing.** Why: site launch may need them
+[B] 5. **Public portfolio endpoints timing.** Why: site launch may need them
    early. A: Phase 1. B: Phase 2 (recommended). Blocking: site launch plan.
-6. **Public service catalogue.** Why: `GET /v1/services/all` without auth
+[B] 6. **Public service catalogue.** Why: `GET /v1/services/all` without auth
    exposes pricing. A: public (recommended, prices are marketing).
    B: authenticated. Blocking: site catalogue integration.
-7. **SeaweedFS topology/backups.** Why: durability/ops is owner infra.
+[C] 7. **SeaweedFS topology/backups.** Why: durability/ops is owner infra.
    A: single node + snapshots. B: replicated + off-site backups
    (recommended). Blocking: deploy design.
-8. **Invoice provider.** Why: provider choice shapes Documents integration.
+[C] 8. **Invoice provider.** Why: provider choice shapes Documents integration.
    A/B: invoicexpress / moloni / vendus / toconline — no default offered;
    owner decides. Blocking: Phase 2 finance only.
-9. **Resend inbound story.** Why: domain + secret rotation affect mail
+[C] 9. **Resend inbound story.** Why: domain + secret rotation affect mail
    design. A/B: owner provides domain and rotation policy. Blocking:
    Phase 2 mail only.
 
@@ -222,3 +228,4 @@ Resolved out of this list (now Proposed or Confirmed): tag model, cookie
 strategy, session lifetimes, gallery/album semantics, album-code mandate
 (B for paid, A for FREE), lockout (default: 5 fails → 15 min backoff,
 env-configurable), pack/album entitlement semantics, client deletion.
+

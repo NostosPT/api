@@ -93,16 +93,19 @@ Favorites, minimal Purchase, AuditLog.
 
 ## Unresolved decisions (`DECISION REQUIRED`)
 
-1. Public portfolio endpoints in Phase 1 or 2 (site launch dependency)?
-2. `GET /v1/services/all` public without auth (site catalogue)?
-3. SeaweedFS topology (single vs replicated) and backup story.
-4. Invoice provider choice (invoicexpress/moloni/vendus/toconline).
-5. Resend inbound domain + webhook secret rotation story.
-6. PHOTOGRAPHER photo scope: own photos only (`photographerId` = self) or
+[B] 1. Public portfolio endpoints in Phase 1 or 2 (site launch dependency)?
+[B] 2. `GET /v1/services/all` public without auth (site catalogue)?
+[C] 3. SeaweedFS topology (single vs replicated) and backup story.
+[C] 4. Invoice provider choice (invoicexpress/moloni/vendus/toconline).
+[C] 5. Resend inbound domain + webhook secret rotation story.
+[B] 6. PHOTOGRAPHER photo scope: own photos only (`photographerId` = self) or
    archive-wide edit (frontend says "own work" but grants archive edit)?
-7. 2FA scope: optional per-user vs mandatory ADMIN?
-8. Claim vector backend: pgvector vs external embeddings service?
-9. Analytics deferral approval (Phase 2 with documented minimal schema)?
+[C] 7. 2FA scope: optional per-user vs mandatory ADMIN?
+[C] 8. Claim vector backend: pgvector vs external embeddings service?
+[C] 9. Analytics deferral approval (Phase 2 with documented minimal schema)?
+
+A = schema blocker, B = Phase 1 implementation, C = Phase 2. Zero A items —
+nothing blocks Prisma schema creation.
 
 Full format (options, recommended defaults, blockers) in `DECISIONS.md`.
 Resolved into Proposed/Confirmed: tag model, cookie strategy, session
