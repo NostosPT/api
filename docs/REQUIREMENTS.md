@@ -3,6 +3,11 @@
 Source: project-owner functional briefing (authoritative product input).
 Complementary on-disk input: `future updates/ideas.txt` (dashboard states,
 notifications, Payment ≠ Purchase, global search, settings tabs).
+Conceptual input: the existing model at the actual path
+`docs/database/initial-model.md` — note it is referenced as
+`docs/database/initial-model.mmd` in `AGENTS.md` and prior messages, but the
+file on disk is `.md`; it is left untouched and the mismatch is reported
+rather than silently renamed.
 Superseded: any older Iron-session reference — the approved API-owned opaque
 session architecture (`DECISIONS.md`) wins for auth/session implementation.
 
@@ -19,7 +24,7 @@ Status legend used throughout:
 
 | # | Requirement | Model audit | Phase | Status |
 |---|---|---|---|---|
-| 1 | Public Gallery (public archive, only approved/published) | Was client-delivery entity — **redefined**, see §3 | 1 | Confirmed |
+| 1 | Public Gallery (public archive, only approved/published) | Challenged A-vs-B — **Model B curated collection**, see §2b | 1 | Proposed |
 | 2 | Configurable Categories | Was hard-coded list in frontend — **new `Category` entity** | 1 | Confirmed |
 | 3 | Gallery filtering/sorting (category, tag, date, newest/oldest, combined) | Missing — query contract on public listing | 1 | Confirmed |
 | 4 | Gallery search (photo, ID, category, tag) | Missing — search contract (trigram) | 1 | Confirmed |
@@ -32,7 +37,7 @@ Status legend used throughout:
 | 11 | Album types WATERMARK/PAID/FREE with behaviors | Was ambiguous portfolio/delivery — **redefined client-owned + `albumType`** | 1 | Confirmed |
 | 12 | Favorites (client-scoped, count, survives rules, purchase basis) | Missing — **new `Favorite`** | 1 | Confirmed (+2 Proposed sub-rules) |
 | 13 | Photo access states (6 listed) | Must NOT be one enum — **derived, see §5** | 1 | Confirmed |
-| 14 | Claim (reference upload → visual similarity → watermarked view → purchase) | Missing — vector search is Phase 2 | Boundary 1 / engine 2 | Confirmed split |
+| 14 | Claim (reference upload → visual similarity → watermarked view → purchase) | Missing — **fully deferred**, no SQL pretence | 2 | Deferred + Decision Required |
 | 15 | Service Request onboarding (common + 4 service shapes + contact) | Flat fields insufficient — **relational core + `answers` JSONB** | 1 | Confirmed (+Proposed shape) |
 | 16 | Public website tabs | Consumer (site nav), no model impact | — | Confirmed |
 | 17 | Internal staff roles (5, no CLIENT role) | Correct — matrix updated, client never authenticates | 1 | Confirmed |
@@ -61,11 +66,37 @@ Public Gallery  →  Nostos public portfolio (derived listing, no owner)
 Client → Album (WATERMARK | PAID | FREE)  →  client delivery
 ```
 
-* **Gallery** is no longer a container entity. The public archive is a query
-  over `Photo` (`status=PUBLISHED AND visibility=PUBLIC`) with category/tag/
-  date filters, search, `newest|oldest|featured` ordering, and a detail view
-  carrying the global copyright/credit text. There is no client gallery, no
-  gallery access code, no `GalleryPhoto` join.
+* **Gallery is a curated public collection (Model B — challenged and
+  re-decided, see §2b).** It owns membership, ordering, and featured flags;
+  the archive listing/search/filter layer queries through it. There is no
+  client gallery and no gallery access code — delivery is `Album` only.
+
+### §2b. Gallery Model A vs Model B (challenged conclusion)
+
+Model A (rejected): public gallery = bare query over published photos, order
+via `Photo.featuredPosition`. Sufficient for a single flat listing, but it
+cannot represent membership curation (which photos are exhibited vs merely
+published), per-collection ordering, featured pins, multiple future
+collections, or collection-level publish/unpublish — all required or
+foreseen (§9: ordering, featured, publish/unpublish, "future multiple public
+collections", editorial control). Bolting these on later means inventing the
+join table anyway, plus a data migration.
+
+Model B (recommended): `Gallery{id, slug UNIQUE (public, guessable OK),
+title, description?, status DRAFT|PUBLISHED, position? (collection order),
+createdAt, updatedAt}` +
+`GalleryPhoto{galleryId FK CASCADE, photoId FK CASCADE, position int,
+isFeatured bool default false, addedAt}`, PK `(galleryId, photoId)`,
+`UNIQUE(galleryId, position)`. Reasons: (1) ordering/featured are
+per-collection editorial facts, not photo attributes; (2) membership is
+explicit — publishing a photo does not force exhibition; (3) N future
+collections with zero schema change; (4) collection publish/unpublish without
+touching photos; (5) listing still filters `Photo.status=PUBLISHED AND
+visibility=PUBLIC` at read time, so photo gates remain the safety net.
+Seeded default collection: `archive`. Copyright stays global (no duplication).
+**Proposed**, needs approval — but it is a recommendation with concrete
+reasons, not a guess: do not preserve Gallery merely from history, and do not
+drop it merely because a query suffices today.
 * **Album** belongs to exactly one Client (`clientId NOT NULL`, `RESTRICT` on
   client delete). It is the only client-delivery container. Public portfolio
   collections, if ever needed as entities, reuse the public Gallery concept —
@@ -85,6 +116,29 @@ Client → Album (WATERMARK | PAID | FREE)  →  client delivery
 | Staff visibility | role-gated reads (photographer/assistant delivery roles) | Confirmed |
 | Download/purchase rights | derived from type + entitlement, never stored flags | Confirmed |
 
+### §2c. Album access = stateless capability (no `AlbumSession` table)
+
+Because clients never authenticate, private access is a capability, never an
+identity: the Client record is not a credential and knowing a Client ID
+grants nothing. Access link: `/a/:slug?a=<token>&exp=<ts>`, where `token =
+HMAC-SHA256(serverSecret, albumId | secretVersion | exp)`, verified
+statelessly; `Album.secretVersion` rotation revokes all outstanding links at
+once. The optional access code is presented per request and Argon2id-verified;
+attempts are strictly rate-limited per album + IP. Favorites, purchase, and
+download endpoints all require (capability + code-if-set + unexpired album).
+No `AlbumAccess`/`AlbumAccessToken`/`AlbumSession` rows in Phase 1 — nothing
+to store, nothing to leak; persistent device sessions (if ever needed) are a
+Phase 2 consideration. **Proposed**, needs approval.
+
+### §2d. Album code: recommended B for paid, A for FREE (Option C rejected)
+
+A (capability URL only): frictionless, but a leaked link is full access —
+acceptable only for FREE. B (URL + separate code): knowledge factor on top of
+possession; right for WATERMARK/PAID published albums. C (slug + code only):
+weakest — the slug is the identifier, so the code becomes the sole secret and
+is enumerable. Recommendation: **B for WATERMARK/PAID, A for FREE**.
+**Proposed**, needs approval.
+
 ---
 
 ## 3. Album types (explicit `albumType`, no contradictory booleans)
@@ -103,6 +157,12 @@ WATERMARK: all visible, all watermarked, favorites on, single/pack/full
 purchase → purchased photos final. PAID: only `isPreview` subset visible
 (watermarked), rest locked, full-album purchase only → whole album final.
 FREE: all visible, no watermark, favorites + downloads on, no payment.
+
+Persisted `AlbumPhoto` fields are exactly `position`, `isPreview`, `addedAt`
+— editorial/configuration state. Ownership/access state lives in
+`Purchase`/entitlement (§6); everything else (`Visible/Watermarked/Locked/
+Hidden/Purchased/Downloadable`) is the runtime derived response. No giant
+state enum exists anywhere.
 
 ---
 
@@ -129,15 +189,27 @@ purge) and staff visibility scope as stated.
 ## 6. Purchases (minimal Phase 1 vs full Phase 2)
 
 ```text
-Purchase ≠ Payment provider transaction ≠ Invoice/financial document
+Purchase ≠ Payment ≠ Entitlement
 ```
 
-* Phase 1 `Purchase{id, clientId, scope PHOTO|PACK|ALBUM, photoId?,
-  albumId?, packPhotoIds JSONB snapshot?, priceCents, currency,
-  status PENDING|COMPLETED|FAILED|REFUNDED, completedAt?, createdAt}`.
+* **Purchase (Phase 1)** is the commercial record: who bought which scope at
+  which price and when. `{id, clientId FK RESTRICT, scope PHOTO|PACK|ALBUM,
+  photoId?, albumId?, packPhotoIds JSONB snapshot, priceCents, currency,
+  status PENDING|COMPLETED|FAILED|REFUNDED, note?, completedAt?, createdAt}`.
   Statuses are staff-confirmed (e.g. transfer received); **no provider**.
-* Phase 2: provider transactions, webhooks, reconciliation, Documents
-  (quotes/invoices/credit notes, ATCUD), Orders fulfilment, Email/Resend.
+* **Payment (Phase 2)** is the provider transaction: provider, providerRef,
+  amount, status, webhook refs, `purchaseId?`. It confirms a Purchase but is
+  a separate record — a Purchase can exist while payment is pending/failed
+  (per `ideas.txt`: "Payment ≠ Purchase").
+* **Entitlement (derived, no Phase 1 table)** is what unlocks a photo: the
+  read-time function `canAccess(client, photo, context)` over COMPLETED
+  purchases. Direct photo purchase unlocks that photo; a pack unlocks the
+  snapshot list; a full-album purchase unlocks current album membership at
+  read time (**Proposed**: later-added photos included — simplest consistent
+  rule for "bought the album"). FAILED/CANCELLED/REFUNDED rows are excluded,
+  so revocation is automatic with no flag updates. Purchased photos live
+  nowhere as stored state — they are the completed-Purchase join. Phase 2 may
+  materialize entitlements for performance (deferred consideration, not need).
 * Aggregates on the client page (latest purchase, total spent, photos/albums
   purchased) are derived queries, never stored counters.
 
@@ -152,17 +224,23 @@ demonstrated normalized requirement (frontend client tags stay free-form
 `string[]` on the record). **Proposed**, needs approval.
 `Category{id, name, slug UNIQUE, description?, status, position UNIQUE}`
 is a separate first-class entity: a stable curated taxonomy driving public
-filters and ordering, while tags are free-form labels. Photo holds
-`categoryId FK SET NULL` (never a hard-coded enum).
+filters and ordering, while tags are free-form labels. Because a photo may
+belong to several categories, the relation is M:N via `PhotoCategory{photoId,
+categoryId, addedAt}` — a single `categoryId` column is rejected as
+incorrect for the stated requirement. No category enum exists anywhere.
+**Proposed**, needs approval.
 
 ## 8. Publishing & copyright
 
 `Photo.status: DRAFT → APPROVED → PUBLISHED` (forward-only except explicit
 unpublish to DRAFT; every transition audit-logged). Public listing requires
 `status=PUBLISHED AND visibility=PUBLIC` — two independent gates so neither
-approval nor a visibility flag alone can publish accidentally. Copyright/credit
-text lives once in global site configuration (no per-photo duplication).
-**Proposed**, needs approval.
+approval nor a visibility flag alone can publish accidentally. Unpublish is an
+explicit operation (`status→DRAFT` or `visibility→PRIVATE`), also logged.
+Copyright text lives once in global site configuration; per-photo credit is
+the linked photographer name — no duplicated strings. Publication ordering
+and featured pins live on `GalleryPhoto.position` / `isFeatured` (Model B),
+never on `Photo`. **Proposed**, needs approval.
 
 ## 9. Client (confirmed)
 
@@ -182,22 +260,30 @@ server-side schema registry, `referenceKeys text[]` (storage keys of uploaded
 references). Rationale: common fields need querying/sorting; per-service
 shapes vary and must not become dozens of nullable columns. **Proposed.**
 
-## 11. Claim (boundary now, engine later)
+## 11. Claim (fully deferred — no fake SQL similarity)
 
-Phase 1: no similarity engine (SQL text search cannot do visual similarity —
-stated explicitly, not pretended). Reserved boundary: reference uploads reuse
-the upload-intent infrastructure; `ClaimSearch{id, referenceKey,
-status, createdAt}` lands in Phase 2 with the engine. **Decision Required:**
-pgvector in Postgres vs external embeddings service.
+Phase 1 builds nothing Claim-specific: no tables, no endpoints, no boundary
+scaffolding. SQL text search cannot perform visual similarity and no
+pretence architecture is created for it. Phase 2: reference uploads (reusing
+upload-intent infrastructure), `ClaimSearch{id, referenceKey, status,
+createdAt}`, embeddings pipeline, vector search with similarity ranking, and
+watermarked match views. **Decision Required:** pgvector in Postgres vs
+external embeddings service.
 
 ## 12. Analytics (recommended deferral)
 
 Proposed Phase 2. Minimum safe schema if approved: `AnalyticsEvent{id,
 visitorHash, sessionHash?, page, photoId?, albumId?, event, createdAt}`
 (date-partitioned) + `VisitorSalt{current, previous, rotatedAt}`; visitor =
-HMAC(raw IP + UA, rotating salt), raw IP never stored. Metrics (unique
-visitors, visits, views, top pages/photos, funnel starts/completions, periods
-24h–1y) derived. GDPR compliance is a legal decision, not claimed here.
+HMAC(raw IP + UA, salt), raw IP never stored. Salt honesty, stated plainly: a
+**daily** rotating salt makes accurate 30/90-day unique-visitor counts
+impossible (hashes unlink across days) — daily rotation yields accurate
+intraday uniques plus cross-day totals/visits only. Recommended compromise:
+epoch-rotating salt (e.g. 30 days) for `visitorHash` (uniques accurate within
+the epoch) plus a daily salt for session linkage, 13-month rolling retention.
+Metrics (uniques, visits, views, top pages/photos, funnel, 24h–1y) derived in
+batch, never per-request. GDPR compliance is a legal decision, not claimed
+here. No Analytics tables in Phase 1.
 
 ## 13. 2FA & AuditLog
 
@@ -212,14 +298,32 @@ purchase status changes, upload finalize, access-code changes.
 
 ## 14. Corrected domain model (Phase 1 entities)
 
-User, Session, Invite, Client, ClientActivity, Service, ServiceRequest (+
-contact/answers JSONB), RequestNote, Category, Tag, PhotoTag, AlbumTag,
-Photo (`status` + `visibility` + `categoryId` + `featuredPosition?`),
-Album (`clientId`, `type`, `slug`, `accessCodeHash?`, pricing, `status`,
-`expiresAt?`), AlbumPhoto (`position`, `isPreview`), Favorite, Purchase
-(minimal), AuditLog. Dropped vs previous package: Gallery, GalleryPhoto,
-ClientTag. Phase 2: Document/LineItem, Order/OrderItem, provider
-transactions, MailThread/Message, Rendition/ClaimSearch/AnalyticsEvent.
+User, Session, Invite, Client (`clientCode`, `status ACTIVE|ARCHIVED`,
+`deletedAt?`; never hard-deleted while albums/purchases/activity exist —
+see §14b), ClientActivity, Service, ServiceRequest (searchable core columns
+`stage, serviceId, clientId, contactEmail, preferredDate, location` +
+`contact`/`answers` JSONB + `referenceKeys text[]`; indexes on the core
+columns), RequestNote, Category, PhotoCategory (M:N — photos may belong to
+several categories, so no `categoryId`), Tag, PhotoTag, AlbumTag, Photo
+(`status` + `visibility`, no stored URLs/counters), Gallery + GalleryPhoto
+(`position`, `isFeatured`), Album (`clientId`, `type`, `slug`,
+`accessCodeHash?`, `secretVersion`, pricing, `status`, `expiresAt?`),
+AlbumPhoto (`position`, `isPreview`, `addedAt` — editorial/config state
+only), Favorite, Purchase (minimal commercial record), AuditLog.
+No `Entitlement` table in Phase 1 (derived, §6b). No `AlbumSession` table
+(stateless capability, §4b). Dropped vs original concept: `ClientServices`,
+`ClientTag`, `s3_*` URL fields. Phase 2: Document/LineItem, Order/OrderItem,
+`Payment` (provider transaction), MailThread/Message, Rendition,
+`ClaimSearch`, `AnalyticsEvent`.
+
+### §14b. Client deletion policy (historical integrity)
+
+Hard deletion is forbidden while albums, purchases, or activity reference the
+client (FKs `RESTRICT` + application guard). Deactivation = `status→ARCHIVED`
++ `deletedAt` timestamp; the email is anonymized (`deleted_<uuid>@
+archived.invalid`) so the UNIQUE address can be re-registered, while all
+history stays linked by id. Purchases and financial history are immutable
+regardless. **Proposed**, needs approval.
 
 ## 15. Corrected ER diagram (Phase 1)
 
@@ -237,6 +341,10 @@ erDiagram
     CLIENT ||--o{ ALBUM : owns
     CLIENT ||--o{ FAVORITE : marks
     CLIENT ||--o{ PURCHASE : makes
+    GALLERY ||--o{ GALLERY_PHOTO : curates
+    PHOTO ||--o{ GALLERY_PHOTO : exhibited
+    CATEGORY ||--o{ PHOTO_CATEGORY : groups
+    PHOTO ||--o{ PHOTO_CATEGORY : belongs_to
     ALBUM ||--o{ ALBUM_PHOTO : contains
     PHOTO ||--o{ ALBUM_PHOTO : belongs_to
     ALBUM ||--o{ FAVORITE : context
@@ -269,6 +377,11 @@ erDiagram
         enum type
         enum status
     }
+    GALLERY {
+        uuid id PK
+        string slug UK
+        enum status
+    }
     PHOTO {
         uuid id PK
         int number UK
@@ -290,12 +403,27 @@ erDiagram
     }
 ```
 
+## 15b. SeaweedFS storage architecture (reviewed — topology stays open)
+
+Genuinely undecided: single vs replicated topology and backups (owner's infra
+choice). Everything else is decided architecture: collections
+`nostos-originals/` (private, no anonymous access) and `nostos-derivatives/`
+(private, served only via presigned/CDN-signed reads); presigned PUT for
+upload (≤15 min TTL, `content-length` + `content-type` conditions) and
+presigned GET for reads (short TTL); 50 MB maximum enforced before signing
+and re-verified at finalize; formats JPEG/PNG/WebP plus camera RAW
+extensions; server-side `file-type` magic-byte validation against an
+allowlist (client MIME is a hint); client-supplied SHA-256 verified at
+finalize; object naming `originals/{uuid}-{slugified}` and derivatives
+`{photoId}/{variant}.{ext}`; abandoned `PENDING` intents swept after 24h.
+**Proposed** except topology/backups (**Decision Required**).
+
 ## 16. Traceability (requirement → entity → API area → phase → status)
 
 | Requirement | Entity | API area | Phase | Status |
 |---|---|---|---|---|
-| Public Gallery + filters/sort/search/detail | Photo, Category, Tag | `GET /v1/public/gallery`, `/v1/public/photos/:number` | 1 | Confirmed |
-| Categories (configurable, CRUD) | Category | `/v1/categories` | 1 | Confirmed |
+| Public Gallery + filters/sort/search/detail | Gallery, GalleryPhoto, Photo, Category, Tag | `GET /v1/public/galleries`, `/v1/public/photos/:number` | 1 | Model B Proposed |
+| Categories (configurable, CRUD, M:N) | Category, PhotoCategory | `/v1/categories` | 1 | Confirmed + Proposed join |
 | Publishing workflow + copyright config | Photo.status, SiteConfig | photo publish endpoints | 1 | Confirmed + Proposed |
 | Tags (+albums, visibility, CRUD) | Tag, PhotoTag, AlbumTag | `/v1/tags` | 1 | Confirmed |
 | Clients + lookup + timeline + aggregates | Client, ClientActivity | `/v1/clients` | 1 | Confirmed |
@@ -304,8 +432,8 @@ erDiagram
 | Minimal Purchase/entitlement | Purchase | `/v1/purchases` (staff-confirmed) | 1 | Proposed |
 | Provider payments, Documents, Orders, Email | Phase 2 entities | Phase 2 areas | 2 | Deferred |
 | Onboarding (core + answers JSONB) | ServiceRequest | `/v1/requests`, public intake | 1 | Confirmed + Proposed |
-| Claim boundary | (reserved `ClaimSearch`) | reserved | 2 | Deferred + Decision Required |
-| Analytics (+privacy controls) | (reserved `AnalyticsEvent`) | reserved | 2 (Proposed) | Deferred |
+| Claim (fully deferred, incl. boundary) | `ClaimSearch` (Phase 2) | reserved | 2 | Deferred + Decision Required (vector backend) |
+| Analytics (+privacy controls) | `AnalyticsEvent` (Phase 2, no P1 tables) | reserved | 2 (Proposed) | Deferred (approval) |
 | 2FA | (reserved TOTP fields) | login enforcement | Later | Decision Required |
 | AuditLog | AuditLog | append-only, all domains | 1 | Confirmed |
 | Auth/sessions (opaque, Iron superseded) | Session, User | `/v1/auth` | 1 | Confirmed |
