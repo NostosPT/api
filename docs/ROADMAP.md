@@ -29,8 +29,10 @@ Gallery, Uploads.
 5. **Photos + Albums + Uploads** — upload intent → direct PUT to SeaweedFS
    (S3-compatible) → verify/finalize → register metadata; magic-byte + 50 MB
    validation; private originals, presigned reads.
-6. **Gallery** — client delivery galleries with slug + hashed access code,
-   publish lifecycle, public `/v1/public/g/:slug`.
+6. **Gallery** — private client delivery (never public portfolio): slug +
+   mandatory hashed access code for published galleries, publish lifecycle,
+   `GET /v1/public/g/:slug` requiring the access code (slug alone grants
+   nothing), strictly rate-limited code attempts.
 7. **Hardening** — negative/security tests per domain, rate limits, IDOR audit,
    OpenAPI docs.
 
@@ -74,17 +76,13 @@ Gallery, Uploads.
 
 1. Public portfolio endpoints in Phase 1 or 2 (site launch dependency)?
 2. Tag model: single `Tag` table with scope vs separate photo/client tags?
-3. Gallery vs Album overlap: can a gallery reference album-ordered photos, or
-   only loose photos? Are galleries ever public-portfolio?
-4. `GET /v1/services/all` public without auth (site catalogue)?
-5. Cookie domain strategy for `api.nostos.photos` + `nostos.photos`
-   (cross-subdomain `Domain=` vs same-site proxy)?
-6. Session idle vs absolute expiry durations.
-7. Concurrent session limit per user.
-8. Failed-login lockout thresholds.
-9. SeaweedFS topology (single vs replicated) and backup story.
-10. Invoice provider choice (invoicexpress/moloni/vendus/toconline).
-11. Resend inbound domain + webhook secret rotation story.
+3. `GET /v1/services/all` public without auth (site catalogue)?
+4. Failed-login lockout thresholds.
+5. SeaweedFS topology (single vs replicated) and backup story.
+6. Invoice provider choice (invoicexpress/moloni/vendus/toconline).
+7. Resend inbound domain + webhook secret rotation story.
+8. PHOTOGRAPHER photo scope: own photos only (`photographerId` = self) or
+   archive-wide edit (frontend says "own work" but grants archive edit)?
 
 ## Future architecture considerations
 
