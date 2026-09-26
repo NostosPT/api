@@ -2,11 +2,12 @@ import type {
 	FastifyInstance,
 	FastifyReply,
 	FastifyRequest,
+	FastifySchema,
 } from "fastify";
 
 import type { HttpMethod } from "../types/routes.js";
 
-interface RouteResult {
+export interface RouteResult {
 	status: number;
 	data: unknown;
 }
@@ -16,18 +17,22 @@ type RouteHandler = (
 	reply: FastifyReply,
 ) => unknown | RouteResult | Promise<unknown | RouteResult>;
 
-interface Route {
+interface RouteOptions {
+	schema?: FastifySchema;
+}
+
+interface Route extends RouteOptions {
 	method: HttpMethod;
 	path: string;
 	handler: RouteHandler;
 }
 
 export interface Router {
-	get(path: string, handler: RouteHandler): void;
-	post(path: string, handler: RouteHandler): void;
-	put(path: string, handler: RouteHandler): void;
-	patch(path: string, handler: RouteHandler): void;
-	delete(path: string, handler: RouteHandler): void;
+	get(path: string, handler: RouteHandler, options?: RouteOptions): void;
+	post(path: string, handler: RouteHandler, options?: RouteOptions): void;
+	put(path: string, handler: RouteHandler, options?: RouteOptions): void;
+	patch(path: string, handler: RouteHandler, options?: RouteOptions): void;
+	delete(path: string, handler: RouteHandler, options?: RouteOptions): void;
 	register(app: FastifyInstance, prefix: string): void;
 }
 
@@ -38,20 +43,22 @@ export function createRouter(): Router {
 		method: HttpMethod,
 		path: string,
 		handler: RouteHandler,
+		options?: RouteOptions,
 	): void => {
 		routes.push({
 			method,
 			path,
 			handler,
+			schema: options?.schema,
 		});
 	};
 
 	return {
-		get: (path, handler) => add("GET", path, handler),
-		post: (path, handler) => add("POST", path, handler),
-		put: (path, handler) => add("PUT", path, handler),
-		patch: (path, handler) => add("PATCH", path, handler),
-		delete: (path, handler) => add("DELETE", path, handler),
+		get: (path, handler, options) => add("GET", path, handler, options),
+		post: (path, handler, options) => add("POST", path, handler, options),
+		put: (path, handler, options) => add("PUT", path, handler, options),
+		patch: (path, handler, options) => add("PATCH", path, handler, options),
+		delete: (path, handler, options) => add("DELETE", path, handler, options),
 
 		register: (app, prefix) => {
 			for (const route of routes) {
@@ -63,6 +70,7 @@ export function createRouter(): Router {
 				app.route({
 					method: route.method,
 					url: routePath,
+					schema: route.schema,
 					handler: async (request, reply) => {
 						const result = await route.handler(request, reply);
 

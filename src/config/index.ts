@@ -8,17 +8,30 @@ export function loadConfig(): AppConfig {
 		return activeConfig;
 	}
 
-	activeConfig = {
-		env: validateEnv(),
+	const env = validateEnv();
 
+	activeConfig = {
+		env,
 		app: {
 			name: "api",
 			version: "1.0.0",
 		},
-
 		rateLimit: {
 			windowMs: 15 * 60 * 1000, // 15 minutes
 			max: 100, // limit each IP to 100 requests per windowMs
+		},
+		session: {
+			absoluteSeconds: env.SESSION_ABSOLUTE_SECONDS,
+			idleSeconds: env.SESSION_IDLE_SECONDS,
+			maxConcurrent: env.SESSION_MAX_CONCURRENT,
+		},
+		storage: {
+			endpoint: env.S3_ENDPOINT,
+			region: env.S3_REGION,
+			bucket: env.S3_BUCKET,
+			accessKeyId: env.S3_ACCESS_KEY_ID,
+			secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+			publicEndpoint: env.S3_PUBLIC_ENDPOINT,
 		},
 	};
 
