@@ -119,6 +119,7 @@ drop it merely because a query suffices today.
 | Favorites | WATERMARK + FREE (visible photos); PAID visible subset only | Confirmed-derived |
 | Staff visibility | role-gated reads (photographer/assistant delivery roles) | Confirmed |
 | Download/purchase rights | derived from type + entitlement, never stored flags | Confirmed |
+| Album deletion with history | blocked while COMPLETED purchases reference it — archive (`status→ARCHIVED`) instead; `Purchase.albumId` is `RESTRICT` | Proposed |
 
 ### §2c. Album access = stateless capability (no `AlbumSession` table)
 
@@ -239,6 +240,22 @@ Verdict: the derived model represents every case without an entitlement
 table. The only accepted cost is read-time joins (materialize in Phase 2 if
 measured slow — deferred, not needed now).
 
+### §6b. Entitlement case analysis (validates the no-table model)
+
+| Case | Derived result | Safe? |
+|---|---|---|
+| Buy photo A | COMPLETED `Purchase(PHOTO, photoId=A)` → A final/downloadable | Yes |
+| Buy pack A+B+C | snapshot list → each member final | Yes |
+| Buy full album | current membership at read time → all final (**Proposed**: later-added photos included) | Yes |
+| Failed payment | status ≠ COMPLETED → excluded | Yes |
+| Cancelled/refunded | status change → access lost automatically; already-downloaded files cannot be retrieved (stated limit, not a flaw) | Yes |
+| Photo removed from album | album-scope cover ends; direct/pack purchases of it remain valid | Yes |
+| Photo "deleted" | hard delete forbidden while purchases/favorites reference it (RESTRICT + guard); withdrawal = unpublish, row retained, purchase record immutable; files retained while any COMPLETED purchase references the photo | Yes |
+
+Verdict: the derived model represents every case without an entitlement
+table. The only accepted cost is read-time joins (materialize in Phase 2 if
+measured slow — deferred, not needed now).
+
 ## 7. Tags & Categories
 
 `Tag{id, name, slug UNIQUE, description?, status ACTIVE|INACTIVE,
@@ -333,11 +350,16 @@ columns), RequestNote, Category, PhotoCategory (M:N — photos may belong to
 several categories, so no `categoryId`), Tag, PhotoTag, AlbumTag, Photo
 (`status` + `visibility`, no stored URLs/counters), Gallery + GalleryPhoto
 (`position`, `isFeatured`), Album (`clientId`, `type`, `slug`,
-`accessCodeHash?`, `secretVersion`, pricing, `status`, `expiresAt?`),
-AlbumPhoto (`position`, `isPreview`, `addedAt` — editorial/config state
-only), Favorite, Purchase (minimal commercial record), AuditLog.
+`accessCodeHash?`, `secretVersion`, pricing, `status`, `expiresAt?`, `views` /
+`lastViewedAt?` counters), AlbumPhoto (`position`, `isPreview`, `addedAt` —
+editorial/config state only), Favorite, Purchase (minimal commercial record),
+AuditLog. Required indexes: all FKs; UNIQUE slugs/numbers/codes/emails/
+references/token hashes; composite PKs on joins; `UNIQUE(galleryId, position)`
+/ `UNIQUE(albumId, position)`; partial index on `Photo(status, visibility)`
+for the public listing; trigram (GIN) on client/photo name-title search;
+`(resourceType, resourceId)` on AuditLog (polymorphic, no FK).
 No `Entitlement` table in Phase 1 (derived, §6b). No `AlbumSession` table
-(stateless capability, §4b). Dropped vs original concept: `ClientServices`,
+(stateless capability, §2c). Dropped vs original concept: `ClientServices`,
 `ClientTag`, `s3_*` URL fields. Phase 2: Document/LineItem, Order/OrderItem,
 `Payment` (provider transaction), MailThread/Message, Rendition,
 `ClaimSearch`, `AnalyticsEvent`.
