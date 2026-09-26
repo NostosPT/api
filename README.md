@@ -1,119 +1,243 @@
-# Nostos API
+# TypeScript Web Server Template
 
-Fastify 5 + Prisma 7 (PostgreSQL) + S3 API for the Nostos photographic archive and studio.
+A production-oriented Web Server template built with **TypeScript** and **Fastify**.
 
-## Quick start (everything in Docker)
+The template provides a structured foundation for building Web Servers without forcing application-specific business logic into the base.
+
+## Features
+
+* TypeScript
+* Fastify
+* Automatic route discovery
+* Versioned Web Server routes
+* Modular middleware architecture
+* CORS configuration
+* Security headers with Helmet
+* Rate limiting
+* Request IDs
+* HTTP request logging
+* Response compression
+* Centralized error handling
+* Request body size limits
+* Native Fastify request validation
+* Swagger / OpenAPI documentation
+* Graceful application lifecycle
+* Environment-based configuration
+* Structured logging
+* Sensitive data redaction
+
+## Requirements
+
+* Node.js 20+
+* npm or pnpm
+
+## Getting Started
+
+Install dependencies:
 
 ```bash
-ADMIN_EMAIL=you@nostos.pt ADMIN_PASSWORD='a-long-password' docker compose up --build
+pnpm install
 ```
 
-| Service    | What it does                                                        | Port |
-| ---------- | ------------------------------------------------------------------- | ---- |
-| `postgres` | PostgreSQL 18                                                       | 5432 |
-| `s3`       | SeaweedFS, S3-compatible storage (also used in production)          | 8333 |
-| `migrate`  | One-shot: `prisma migrate deploy`, creates the bucket, seeds admin | –    |
-| `api`      | The API (bundled, ~no dependencies, non-root)                       | 3000 |
-
-`curl localhost:3000/health/ready` → `{"status":"ok", ...}`
-
-## Local development (API on the host)
+Create the environment configuration:
 
 ```bash
 cp .env.example .env
-docker compose up -d postgres s3
-pnpm install
-pnpm db:migrate        # apply/create migrations
-pnpm storage:init      # create the bucket
-pnpm db:seed           # first admin from ADMIN_EMAIL / ADMIN_PASSWORD
+```
+
+Start the development server:
+
+```bash
 pnpm dev
 ```
 
-Schema changes: edit `prisma/schema.prisma`, then `pnpm db:migrate --name <change>`.
+Build the application:
 
-## Layout
-
+```bash
+pnpm build
 ```
+
+Start the production build:
+
+```bash
+pnpm start
+```
+
+## Project Structure
+
+```text
 src/
-  app.ts, server.ts   Fastify setup and entry point
-  config/             Env validation (zod)
-  db/                 Prisma client
-  storage/            S3 client, presigned URLs
-  auth/               Password hashing, sessions, auth plugin, /auth routes
-  users/              Staff accounts (admin only)
-  photos/             Staff photo management + uploads
-  albums/             Staff album management
-  archive/            Public read-only archive (photos, albums, categories)
-  clients/            Studio clients
-  services/           Studio services (public list, admin CRUD)
-  galleries/          Private client galleries: staff routes + client access
-  health/             Liveness/readiness
-  docs/               OpenAPI spec + Swagger UI
-prisma/               Schema, migrations, seed
-scripts/              storage-init
+├── config/
+│   └── ...
+├── core/
+│   ├── bootstrapper.ts
+│   ├── httpServer.ts
+│   └── shutdown.ts
+├── loaders/
+│   └── routeLoader.ts
+├── logging/
+│   └── logger.ts
+├── middleware/
+│   ├── compression.ts
+│   ├── cors.ts
+│   ├── errorHandler.ts
+│   ├── headers.ts
+│   ├── httpLogger.ts
+│   ├── rateLimit.ts
+│   └── requestId.ts
+├── routes/
+│   └── v1/
+│       └── health.ts
+├── routing/
+│   └── router.ts
+├── types/
+│   └── ...
+├── utils/
+│   └── ...
+├── app.ts
+└── index.ts
 ```
 
-## Data model
+The exact structure may evolve as the template grows.
 
-- **Photo**: an archive photograph. `number` is the public Photo ID (`Nº 482`, see `/archive/photos/482`). Stores S3 **keys** (`originalKey`, `displayKey`, `thumbnailKey`), never URLs.
-- **Album**: a public, curated collection of photos (ordered).
-- **Client**: someone commissioning work through the Studio.
-- **Service**: a Studio offering with an estimated price range.
-- **Gallery**: a private delivery gallery for a client (optionally linked to a service), shared by link plus an optional access code. Clients can mark favourites (`selected`).
-- **User / Session**: staff accounts (`ADMIN`, `PHOTOGRAPHER`).
+## Routes
 
-## Images and S3
+Routes are automatically discovered from the `routes/` directory.
 
-The bucket is **private**. The API never streams image bytes:
+For example:
 
-1. **Upload**: `POST /photos/uploads {contentType}` returns `{key, uploadUrl}`. The browser `PUT`s the file straight to S3, then calls `POST /photos {originalKey: key, ...}`.
-2. **Read**: responses include short-lived presigned URLs (`S3_URL_TTL_SECONDS`, default 15 min).
-   - Public archive: `display`/`thumbnail` renditions only. **Originals are never exposed.**
-   - Client galleries: the original is included only when `allowDownload` is on.
+```text
+src/routes/v1/health.ts
+```
 
-Local dev and production both use SeaweedFS (credentials injected from env by `docker/seaweedfs/entrypoint.sh`). To move to AWS later, remove `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT` and `S3_FORCE_PATH_STYLE`, set real credentials, and add a CORS rule on the bucket that allows `PUT`/`GET` from the site origin.
+becomes:
 
-> Not built yet: generating `display`/`thumbnail` renditions and the watermark (e.g. `sharp` in a worker or an S3-triggered Lambda). Until then, set `displayKey` manually. Public photos without one have no URLs.
+```text
+GET /v1/health
+```
 
-## Authentication
+A route file contains all HTTP methods belonging to that resource.
 
-Two audiences, two mechanisms:
+```ts
+router.get("/", async () => {
+	return {
+		status: "ok",
+	};
+});
 
-**Staff (admins, photographers): email + password, server-side sessions**
-- Passwords are hashed with argon2id (Node's built-in `crypto.argon2`, OWASP parameters, PHC string format).
-- Login sets an `httpOnly`, `SameSite=Lax` cookie (`Secure` in production) containing a random 256-bit token. Only its SHA-256 is stored in `Session`, so a database leak doesn't expose usable sessions.
-- Sessions slide (30 days by default) and can be revoked instantly: logout, a password change or a role change removes them. JWTs can't be revoked like this, and they add nothing for a first-party website.
-- `/auth/login` is rate-limited, and unknown emails take the same time as wrong passwords.
-- Guards: `app.requireAuth` and `app.requireRole("ADMIN")`.
+router.post("/", async () => {
+	// ...
+});
+```
 
-**Clients: no accounts**
-- A gallery has an unguessable slug (`/g/:slug`) and an optional access code (hashed like a password).
-- A correct code sets a signed, gallery-scoped cookie for 7 days. Unlock attempts are rate-limited.
-- An admin can rotate the link (`POST /galleries/:id/rotate-link`) or change or remove the code.
+The route path is derived from the file location rather than being manually registered in the application.
 
-Deploy the website and API on the same site (e.g. `nostos.pt` and `api.nostos.pt`) so cookies work with `SameSite=Lax`. The frontend must send `credentials: "include"`.
+### Route Parameters
 
-## Endpoints
+A route can define parameters using the router convention:
 
-Interactive docs are at `/docs` (the root URL redirects there), with the OpenAPI spec at
-`/docs/json` and `/docs/yaml`. The spec is generated from each route's Zod schemas; add a
-`response` schema to a route to document what it returns (see `src/photos/`).
+```text
+src/routes/v1/users/[id].ts
+```
 
-| Area            | Routes                                                                                                  | Access |
-| --------------- | ------------------------------------------------------------------------------------------------------- | ------ |
-| Auth            | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`                                                   | –      |
-| Users           | `GET/POST /users`, `PATCH/DELETE /users/:id`                                                              | Admin  |
-| Photos          | `POST /photos/uploads`, `GET/POST /photos`, `GET/PATCH/DELETE /photos/:id`                                | Staff  |
-| Albums          | `GET/POST /albums`, `GET/PATCH/DELETE /albums/:id`, `PUT /albums/:id/photos`                              | Staff  |
-| Clients         | `GET/POST /clients`, `GET/PATCH/DELETE /clients/:id`                                                      | Staff  |
-| Services        | `GET /services` (public), `GET /services/all`, `POST /services`, `PATCH/DELETE /services/:id`             | Admin  |
-| Galleries       | `GET/POST /galleries`, `GET/PATCH/DELETE /galleries/:id`, `PUT /galleries/:id/photos`, `POST /galleries/:id/rotate-link` | Staff |
-| Archive         | `GET /archive/photos`, `GET /archive/photos/:number`, `GET /archive/categories`, `GET /archive/albums[/:slug]` | Public |
-| Client gallery  | `GET /g/:slug`, `POST /g/:slug/unlock`, `GET /g/:slug/photos`, `PUT /g/:slug/photos/:photoId/selection`   | Link + code |
-| Health          | `GET /health/live`, `GET /health/ready`                                                                   | Public |
+becomes:
 
-## Production
+```text
+/v1/users/:id
+```
 
-Runs from `compose.prod.yml` in a Debian CT behind a WireGuard reverse proxy. See
-**[deploy/README.md](deploy/README.md)** for CT setup, proxy config (Caddy/nginx),
-`TRUST_PROXY`, backups and troubleshooting.
+Nested route directories are supported.
+
+## Server Versioning
+
+Server versions are represented by directories:
+
+```text
+routes/
+└── v1/
+    ├── health.ts
+    ├── users.ts
+    └── auth.ts
+```
+
+This produces:
+
+```text
+/v1/health
+/v1/users
+/v1/auth
+```
+
+Future versions can coexist:
+
+```text
+routes/
+├── v1/
+└── v2/
+```
+
+## Configuration
+
+Configuration is loaded from environment variables.
+
+Secrets and environment-specific values must never be committed to the repository.
+
+Use `.env.example` as the reference for required configuration.
+
+## Security
+
+Security middleware is enabled centrally rather than implemented individually in every route.
+
+The base includes:
+
+* HTTP security headers
+* CORS
+* Rate limiting
+* Request ID tracking
+* Request body limits
+* Centralized error handling
+* Sensitive log redaction
+* Request validation
+
+Application-specific authentication and authorization should be added according to the requirements of the application using this template.
+
+See [`SECURITY.md`](SECURITY.md) for security policies and vulnerability reporting.
+
+## Web Server Documentation
+
+OpenAPI / Swagger documentation is available during development at:
+
+```text
+/docs
+```
+
+The documentation should be generated from the Web Server schemas rather than manually maintained whenever possible.
+
+## Logging
+
+Logs are structured and categorized.
+
+Example:
+
+```text
+[HTTP] INFO | Request completed
+```
+
+Sensitive values such as passwords, tokens, Web Server keys and authorization headers are redacted automatically.
+
+Development logs are formatted for readability, while production logging remains machine-readable.
+
+## Development Principles
+
+This template follows a few strict principles:
+
+1. Keep infrastructure separate from application logic.
+2. Keep middleware modular.
+3. Avoid global mutable state where possible.
+4. Validate external input.
+5. Never trust client-provided data.
+6. Never expose internal errors to clients.
+7. Never log secrets.
+8. Keep routes small and focused.
+9. Prefer explicit types over `any`.
+10. Keep framework-specific code isolated where practical.
