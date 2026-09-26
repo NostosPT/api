@@ -44,18 +44,26 @@ decision, the concrete reason, and what was rejected. Open items are marked
   origin — never `Access-Control-Allow-Origin: *` with credentials.
 * **Argon2id** for passwords and gallery/album access secrets. Plaintext
   storage of passwords, session tokens, or access secrets is forbidden.
-* **Gallery = public archive; Album = private client delivery.**
-  Supersedes the earlier inverted semantics. Gallery is not a container entity:
-  the public Nostos archive is a derived listing over `Photo`
-  (`status=PUBLISHED AND visibility=PUBLIC`) with filters, search, and a
-  detail view carrying the global copyright/credit text. An Album belongs to
-  exactly one Client (`Album.clientId NOT NULL`), is the only client-delivery
-  container, and is never a public portfolio. Albums are private by default; a
-  published WATERMARK/PAID album requires an access code (**Proposed**; FREE
-  code optional), Argon2id-hashed, never plaintext. Knowing the slug alone
-  grants nothing: `GET /v1/public/a/:slug` requires the code whenever one is
-  set, returns 404 (not 403) on failure, and code attempts are strictly
-  rate-limited per album + IP.
+* **Gallery = curated public collection (Model B, challenged).**
+  Model A (gallery as bare query over published photos) was evaluated and
+  rejected: it cannot represent curated membership, per-collection ordering,
+  featured pins, multiple future collections, or collection publish state
+  without re-inventing the join later. `Gallery` + `GalleryPhoto(position,
+  isFeatured)` it is; reads still gate on `Photo.status=PUBLISHED AND
+  visibility=PUBLIC`. Album stays the only client-delivery container and is
+  never a public portfolio. Full A-vs-B rationale in
+  `docs/REQUIREMENTS.md` §2b. **Proposed**, needs approval.
+* **Album access is capability-based, no session table.** HMAC-signed link
+  (`albumId | secretVersion | exp`, rotation revokes all) plus per-request
+  access code (Argon2id, strictly rate-limited per album + IP) for published
+  WATERMARK/PAID albums; FREE published albums use the capability link alone.
+  Client IDs are never credentials. Favorites, purchase, and download
+  endpoints all enforce capability + code-if-set + unexpired album.
+* **Purchase ≠ Payment ≠ Entitlement.** Phase 1 `Purchase` is the commercial
+  record (staff-confirmed, no provider); Phase 2 `Payment` is the provider
+  transaction; entitlement is a read-time derivation over COMPLETED purchases
+  (no Phase 1 table) — direct, pack-snapshot, or live album membership;
+  non-completed rows revoke automatically.
 * **Album types are explicit (`WATERMARK | PAID | FREE`), not booleans.**
   Type-owned behaviors (visibility scope, watermarking, favorites, purchase
   models) live on `Album` + `AlbumPhoto.isPreview`; purchase outcomes on
@@ -73,12 +81,30 @@ decision, the concrete reason, and what was rejected. Open items are marked
   (PHOTO|PACK|ALBUM), price snapshot, and staff-confirmed status — no payment
   provider (none invented). Provider transactions, webhooks, Documents
   (ATCUD), Orders fulfilment, and Email/Resend stay Phase 2.
-* **Tags normalized with visibility; Categories are separate.**
+* **Tags normalized with visibility; Categories are separate M:N.**
   `Tag(status ACTIVE|INACTIVE, visibility PUBLIC|INTERNAL)` + `PhotoTag` /
-  `AlbumTag` joins; `ClientTag` dropped (no normalized requirement — client
-  labels stay free-form `string[]`). `Category` is a first-class curated
-  taxonomy (`slug` unique, `position`), never a hard-coded enum; photos hold
-  `categoryId`. **Proposed**, needs approval.
+  `AlbumTag` joins (detach-only deletes; inactive stays associated but
+  unselectable for new public filtering); `ClientTag` dropped — client labels
+  stay free-form `string[]`. `Category` is a first-class curated taxonomy
+  (`slug` unique, `position`), related via `PhotoCategory` join because photos
+  may belong to several categories — no enum, no `categoryId` column.
+* **Publishing is two-gate; copyright is global.** `Photo.status
+  DRAFT→APPROVED→PUBLISHED` plus `visibility`; public requires both;
+  unpublish is explicit and logged. Copyright/credit: one global text +
+  per-photo photographer name. Ordering/featured live on
+  `GalleryPhoto.position` / `isFeatured`.
+* **Clients are never hard-deleted with history attached.** `RESTRICT` +
+  guard; deactivation via `status→ARCHIVED` + `deletedAt` with email
+  anonymization; purchases immutable. **Proposed**, needs approval.
+* **Onboarding answers stay JSONB-backed with a relational core.**
+  Searchable columns (`stage, serviceId, clientId, contactEmail,
+  preferredDate, location`) plus validated `contact`/`answers` JSONB and
+  `referenceKeys`. **Proposed**, needs approval.
+* **Claim fully deferred; Analytics deferred with honest salts.**
+  No Claim tables/endpoints/boundaries in Phase 1. Analytics: no Phase 1
+  tables; epoch-rotating visitor salt (uniques accurate within epoch) + daily
+  session salt, stated limitation that daily rotation cannot yield accurate
+  30/90-day uniques. Both **Proposed**, needs approval.
 * **Publishing is a two-gate workflow.** `Photo.status DRAFT→APPROVED→
   PUBLISHED` (forward-only, audit-logged) plus `visibility`; public listing
   requires both `PUBLISHED` and `PUBLIC`. Copyright/credit text lives once in
@@ -90,12 +116,14 @@ decision, the concrete reason, and what was rejected. Open items are marked
 * **Onboarding: relational core + `answers` JSONB.** Filterable fields stay
   columns; per-service shapes + contact live in validated JSONB (server-side
   schema registry). **Proposed**, needs approval.
-* **Claim: boundary now, engine later.** No SQL-pretends-visual-search;
-  reference uploads reuse upload intents, `ClaimSearch` reserved for Phase 2
-  with the vector engine. **Decision Required:** pgvector vs external service.
-* **Analytics: recommended deferral (Phase 2).** Minimal HMAC/salt-rotated
-  schema documented in `REQUIREMENTS.md` §12; GDPR compliance stays a legal
-  decision. **Proposed**, needs approval.
+* **Claim: fully deferred.** No tables, endpoints, or boundary scaffolding in
+  Phase 1; no SQL-pretends-visual-search. Phase 2: reference uploads,
+  `ClaimSearch`, embeddings pipeline, vector ranking. **Decision Required:**
+  pgvector vs external service.
+* **Analytics: recommended deferral (Phase 2).** Minimal HMAC/epoch-salt
+  schema documented in `REQUIREMENTS.md` §12, with the stated limitation that
+  daily-only rotation cannot yield accurate 30/90-day uniques; no Phase 1
+  tables. GDPR compliance stays a legal decision. **Proposed**, needs approval.
 * **2FA: scope undecided — Decision Required** (optional per-user vs mandatory
   ADMIN). Reserved TOTP fields only; session system unchanged.
 * **AuditLog is Phase 1, append-only.** No update/delete grants or endpoints;
@@ -159,10 +187,38 @@ Note: PHOTOGRAPHER "own work" vs archive-wide edit scope is `DECISION
 REQUIRED` (item 8 below) — the matrix above reflects area access, ownership
 scoping to be fixed at implementation.
 
-## Unresolved (`DECISION REQUIRED`)
+## Unresolved (`DECISION REQUIRED` — genuine owner choices only)
 
-See `docs/ROADMAP.md` § Unresolved decisions (12 items): public portfolio
-scope, tag table shape (+ClientTag drop), public service catalogue, lockout
-thresholds, SeaweedFS topology/backups, invoice provider, Resend inbound
-story, PHOTOGRAPHER photo ownership scope, 2FA scope, Claim vector backend,
-Analytics deferral approval, album access-code mandate for WATERMARK/PAID.
+1. **2FA scope.** Why: determines login flow and ADMIN onboarding risk.
+   A: optional per-user. B: mandatory ADMIN. Recommended default: B.
+   Blocking: auth implementation details.
+2. **PHOTOGRAPHER photo scope.** Why: "own work" vs archive-wide edit
+   conflict in current frontend. A: own photos only. B: archive-wide.
+   Recommended default: none — real conflict, owner decides. Blocking:
+   photo/albums authorization rules.
+3. **Claim vector backend.** Why: pgvector keeps data local; external
+   service offloads ops but moves images out. A: pgvector. B: external
+   embeddings. Recommended default: A (self-hosted posture). Blocking:
+   Phase 2 Claim design only.
+4. **Analytics deferral.** Why: privacy surface vs dashboard metrics appetite.
+   A: defer to Phase 2 (recommended). B: minimal Phase 1 events. Blocking:
+   nothing in Phase 1 either way.
+5. **Public portfolio endpoints timing.** Why: site launch may need them
+   early. A: Phase 1. B: Phase 2 (recommended). Blocking: site launch plan.
+6. **Public service catalogue.** Why: `GET /v1/services/all` without auth
+   exposes pricing. A: public (recommended, prices are marketing).
+   B: authenticated. Blocking: site catalogue integration.
+7. **SeaweedFS topology/backups.** Why: durability/ops is owner infra.
+   A: single node + snapshots. B: replicated + off-site backups
+   (recommended). Blocking: deploy design.
+8. **Invoice provider.** Why: provider choice shapes Documents integration.
+   A/B: invoicexpress / moloni / vendus / toconline — no default offered;
+   owner decides. Blocking: Phase 2 finance only.
+9. **Resend inbound story.** Why: domain + secret rotation affect mail
+   design. A/B: owner provides domain and rotation policy. Blocking:
+   Phase 2 mail only.
+
+Resolved out of this list (now Proposed or Confirmed): tag model, cookie
+strategy, session lifetimes, gallery/album semantics, album-code mandate
+(B for paid, A for FREE), lockout (default: 5 fails → 15 min backoff,
+env-configurable), pack/album entitlement semantics, client deletion.
