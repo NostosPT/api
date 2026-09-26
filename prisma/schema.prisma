@@ -1,0 +1,559 @@
+// Nostos API — Prisma schema (Phase 1 domain).
+// Source of truth: DECISIONS.md + docs/REQUIREMENTS.md + docs/ROADMAP.md.
+// PostgreSQL + Prisma 7. No Drizzle/Knex. No Prisma models are API responses.
+//
+// NOTE (migration): `citext` columns require the extension in the database
+// (`CREATE EXTENSION IF NOT EXISTS citext;`) before the initial migration.
+// NOTE (migration): trigram GIN search indexes and partial public-listing
+// indexes cannot be expressed in Prisma schema and belong in migration SQL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums — fixed domain states only. Categories, tags and services are entities.
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  PHOTOGRAPHER
+  EDITOR
+  ASSISTANT
+  ACCOUNTANT
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum ClientStatus {
+  LEAD
+  ACTIVE
+  PAST
+}
+
+enum LeadSource {
+  WEBSITE
+  EMAIL
+  REFERRAL
+  INSTAGRAM
+  ARCHIVE
+}
+
+enum ActivityKind {
+  NOTE
+  EMAIL
+  REQUEST
+  INVOICE
+  GALLERY
+  ORDER
+  CALL
+}
+
+enum ServiceRequestStage {
+  NEW
+  QUALIFIED
+  QUOTED
+  BOOKED
+  COMPLETED
+  LOST
+}
+
+enum PhotoStatus {
+  DRAFT
+  APPROVED
+  PUBLISHED
+}
+
+enum Visibility {
+  PUBLIC
+  UNLISTED
+  PRIVATE
+}
+
+enum Availability {
+  NOT_FOR_SALE
+  AVAILABLE
+  SOLD_OUT
+}
+
+enum AlbumType {
+  WATERMARK
+  PAID
+  FREE
+}
+
+enum AlbumStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum GalleryStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum PurchaseScope {
+  PHOTO
+  PACK
+  ALBUM
+}
+
+enum PurchaseStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum TagStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum TagVisibility {
+  PUBLIC
+  INTERNAL
+}
+
+enum CategoryStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AuditResult {
+  SUCCESS
+  FAILURE
+  DENIED
+}
+
+enum UploadStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+// ---------------------------------------------------------------------------
+// Staff identity, sessions, invites
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique @db.Citext
+  name         String
+  role         Role
+  status       UserStatus @default(ACTIVE)
+  passwordHash String // Argon2id hash — never plaintext
+  bio          String?
+  avatarKey    String? // storage key only, never a URL
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  sessions          Session[]
+  sentInvites       Invite[]          @relation("InviteSender")
+  photosShot        Photo[]           @relation("PhotoPhotographer")
+  assignedRequests  ServiceRequest[]  @relation("RequestAssignee")
+  requestNotes      RequestNote[]     @relation("RequestNoteAuthor")
+  authoredActivity  ClientActivity[]  @relation("ActivityAuthor")
+  auditActs          AuditLog[]        @relation("AuditActor")
+
+  @@index([role, status])
+}
+
+model Session {
+  id         String    @id @default(uuid()) @db.Uuid
+  tokenHash  String    @unique // hex SHA-512 of the 256-bit token — never the raw token
+  userId     String    @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime // absolute lifetime (Phase 1 default: 30d)
+  lastSeenAt DateTime  @default(now()) // idle lifetime (Phase 1 default: 7d), renewed lazily
+  revokedAt  DateTime?
+  ipHash     String? // HMAC hash, never raw IP
+  uaHash     String? // HMAC hash, never raw user-agent
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, expiresAt])
+}
+
+model Invite {
+  id          String    @id @default(uuid()) @db.Uuid
+  email       String    @db.Citext
+  role        Role
+  tokenHash   String    @unique // single-use invite token hash — never plaintext
+  invitedById String?   @db.Uuid
+  invitedBy   User?     @relation("InviteSender", fields: [invitedById], references: [id], onDelete: SetNull)
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([email])
+}
+
+// ---------------------------------------------------------------------------
+// Clients — one record per account, never an auth identity
+// ---------------------------------------------------------------------------
+
+model Client {
+  id            String       @id @default(uuid()) @db.Uuid
+  clientCode    String       @unique // auto-generated, e.g. CLI-2026-001
+  email         String       @unique @db.Citext // NOT NULL UNIQUE, normalized pre-write
+  name          String
+  phone         String?
+  company       String?
+  notes         String?
+  status        ClientStatus @default(LEAD)
+  tags          String[] // free-form labels — NOT the normalized Tag model
+  taxId         String? // NIF, format-validated app-side
+  address       String?
+  source        LeadSource?
+  lastContactAt DateTime?
+  deletedAt     DateTime? // archival, never hard-delete with history attached
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  activity  ClientActivity[]
+  requests  ServiceRequest[]
+  albums    Album[]
+  favorites Favorite[]
+  purchases Purchase[]
+
+  // name search uses a trigram GIN index added in migration SQL
+  @@index([status, updatedAt])
+}
+
+model ClientActivity {
+  id        String       @id @default(uuid()) @db.Uuid
+  clientId  String       @db.Uuid
+  client    Client       @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  kind      ActivityKind
+  title     String
+  body      String?
+  href      String? // dashboard link, never a secret
+  authorId  String?      @db.Uuid
+  author    User?        @relation("ActivityAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt DateTime     @default(now())
+
+  @@index([clientId, createdAt(sort: Desc)])
+}
+
+// ---------------------------------------------------------------------------
+// Catalogue services vs client service requests (separate concepts)
+// ---------------------------------------------------------------------------
+
+model Service {
+  id             String   @id @default(uuid()) @db.Uuid
+  slug           String   @unique
+  name           String   @unique
+  description    String?
+  priceFromCents Int?
+  priceToCents   Int?
+  currency       String   @default("EUR")
+  active         Boolean  @default(true)
+  position       Int      @unique // catalogue ordering
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  requests ServiceRequest[]
+}
+
+model ServiceRequest {
+  id               String              @id @default(uuid()) @db.Uuid
+  reference        String              @unique // e.g. REQ-2026-031, transactional sequence
+  title            String
+  clientId         String              @db.Uuid
+  client           Client              @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  serviceId        String?             @db.Uuid
+  service          Service?            @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  stage            ServiceRequestStage @default(NEW)
+  preferredDate    DateTime?
+  location         String?
+  locationUndecided Boolean            @default(false)
+  budgetMinCents   Int?
+  budgetMaxCents   Int?
+  estimateFromCents Int?
+  estimateToCents   Int?
+  quoteCents       Int?
+  quoteId          String? // Phase 2 financial document link, no relation yet
+  assigneeId       String?             @db.Uuid
+  assignee         User?               @relation("RequestAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  source           LeadSource?
+  lostReason       String? // required by app logic when stage = LOST
+  contact          Json                @db.JsonB // name/email/phone/instagram/preferredContact
+  answers          Json                @db.JsonB // service-specific questionnaire, registry-validated
+  referenceKeys    String[] // storage keys of uploaded visual references
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  notes RequestNote[]
+
+  @@index([stage, updatedAt(sort: Desc)])
+  @@index([serviceId])
+  @@index([clientId])
+  @@index([assigneeId])
+}
+
+model RequestNote {
+  id        String         @id @default(uuid()) @db.Uuid
+  requestId String         @db.Uuid
+  request   ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  authorId  String?        @db.Uuid
+  author    User?          @relation("RequestNoteAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  body      String
+  createdAt DateTime       @default(now())
+
+  @@index([requestId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Categories (curated taxonomy, M:N) and Tags (labels, M:N + visibility)
+// ---------------------------------------------------------------------------
+
+model Category {
+  id          String         @id @default(uuid()) @db.Uuid
+  name        String         @unique
+  slug        String         @unique
+  description String?
+  status      CategoryStatus @default(ACTIVE)
+  position    Int            @unique // public filter ordering
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  photos PhotoCategory[]
+}
+
+model PhotoCategory {
+  photoId    String   @db.Uuid
+  photo      Photo    @relation(fields: [photoId], references: [id], onDelete: Restrict)
+  categoryId String   @db.Uuid
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([photoId, categoryId])
+  @@index([categoryId])
+}
+
+model Tag {
+  id          String        @id @default(uuid()) @db.Uuid
+  name        String        @unique
+  slug        String        @unique
+  description String?
+  status      TagStatus     @default(ACTIVE) // inactive stays attached, unselectable for new filtering
+  visibility  TagVisibility @default(PUBLIC) // INTERNAL tags never leave staff endpoints
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  photos PhotoTag[]
+  albums AlbumTag[]
+}
+
+model PhotoTag {
+  photoId String @db.Uuid
+  photo   Photo  @relation(fields: [photoId], references: [id], onDelete: Restrict)
+  tagId   String @db.Uuid
+  tag     Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([photoId, tagId])
+  @@index([tagId])
+}
+
+model AlbumTag {
+  albumId String @db.Uuid
+  album   Album  @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  tagId   String @db.Uuid
+  tag     Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([albumId, tagId])
+  @@index([tagId])
+}
+
+// ---------------------------------------------------------------------------
+// Photos — two-gate publication, keys only (URLs are ephemeral presigned)
+// ---------------------------------------------------------------------------
+
+model Photo {
+  id             String       @id @default(uuid()) @db.Uuid
+  number         Int          @unique @default(autoincrement()) // public Nº identifier
+  title          String?
+  description    String?
+  originalKey    String       @unique // single storage source of truth, private
+  displayKey     String?
+  thumbnailKey   String?
+  width          Int?
+  height         Int?
+  takenAt        DateTime?
+  location       String?
+  status         PhotoStatus  @default(DRAFT) // DRAFT → APPROVED → PUBLISHED; public needs PUBLISHED + PUBLIC
+  visibility     Visibility   @default(PRIVATE)
+  availability   Availability @default(NOT_FOR_SALE)
+  priceCents     Int?
+  currency       String       @default("EUR")
+  watermarked    Boolean      @default(false)
+  photographerId String?      @db.Uuid
+  photographer   User?        @relation("PhotoPhotographer", fields: [photographerId], references: [id], onDelete: SetNull)
+  uploadStatus   UploadStatus @default(PENDING) // lifecycle, not access state
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  categories      PhotoCategory[]
+  tags            PhotoTag[]
+  galleryEntries  GalleryPhoto[]
+  albumEntries    AlbumPhoto[]
+  albumsCovered   Album[]         @relation("AlbumCover")
+  favorites       Favorite[]
+  purchases       Purchase[]      @relation("PurchasePhoto")
+
+  // public listing reads (status, visibility); trigram name/title search in migration SQL
+  @@index([status, visibility, createdAt(sort: Desc)])
+  @@index([photographerId])
+  @@index([availability])
+}
+
+// ---------------------------------------------------------------------------
+// Public Gallery collections (Model B curation) — never client delivery
+// ---------------------------------------------------------------------------
+
+model Gallery {
+  id          String        @id @default(uuid()) @db.Uuid
+  slug        String        @unique // public identifier, guessable OK (content is public)
+  title       String
+  description String?
+  status      GalleryStatus @default(DRAFT)
+  position    Int?          @unique // collection ordering, sparse
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  entries GalleryPhoto[]
+}
+
+model GalleryPhoto {
+  galleryId  String   @db.Uuid
+  gallery    Gallery  @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  photoId    String   @db.Uuid
+  photo      Photo    @relation(fields: [photoId], references: [id], onDelete: Restrict)
+  position   Int // per-collection editorial order, dense
+  isFeatured Boolean  @default(false)
+  addedAt    DateTime @default(now())
+
+  @@id([galleryId, photoId])
+  @@unique([galleryId, position])
+  @@index([photoId])
+}
+
+// ---------------------------------------------------------------------------
+// Albums — private client delivery (WATERMARK | PAID | FREE)
+// ---------------------------------------------------------------------------
+
+model Album {
+  id              String      @id @default(uuid()) @db.Uuid
+  clientId        String      @db.Uuid
+  client          Client      @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  slug            String      @unique // unguessable access link identifier — never the sole secret
+  title           String
+  description     String?
+  type            AlbumType
+  status          AlbumStatus @default(DRAFT)
+  accessCodeHash  String? // Argon2id hash where applicable — never plaintext
+  secretVersion   Int         @default(1) // rotation revokes all outstanding capability links
+  priceCents      Int? // PAID full-album price
+  packPriceCents  Int? // WATERMARK pack offer
+  packSize        Int? // WATERMARK pack size
+  currency        String      @default("EUR")
+  coverPhotoId    String?     @db.Uuid
+  coverPhoto      Photo?      @relation("AlbumCover", fields: [coverPhotoId], references: [id], onDelete: SetNull)
+  expiresAt       DateTime?
+  publishedAt     DateTime?
+  views           Int         @default(0) // cheap counter; identity-level visits are Phase 2 analytics
+  lastViewedAt    DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  photos    AlbumPhoto[]
+  tags      AlbumTag[]
+  favorites Favorite[]
+  purchases Purchase[] @relation("PurchaseAlbum")
+
+  @@index([clientId, status])
+}
+
+model AlbumPhoto {
+  albumId   String   @db.Uuid
+  album     Album    @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  photoId   String   @db.Uuid
+  photo     Photo    @relation(fields: [photoId], references: [id], onDelete: Restrict)
+  position  Int // dense editorial order within the album
+  isPreview Boolean  @default(true) // PAID: visible subset; forced true for WATERMARK/FREE
+  addedAt   DateTime @default(now())
+
+  @@id([albumId, photoId])
+  @@unique([albumId, position])
+  @@index([photoId])
+}
+
+// ---------------------------------------------------------------------------
+// Favorites (client-scoped) and minimal Purchases (no provider)
+// ---------------------------------------------------------------------------
+
+model Favorite {
+  id        String   @id @default(uuid()) @db.Uuid
+  clientId  String   @db.Uuid
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  albumId   String   @db.Uuid
+  album     Album    @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  photoId   String   @db.Uuid
+  photo     Photo    @relation(fields: [photoId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+
+  @@unique([clientId, albumId, photoId])
+  @@index([albumId, createdAt])
+}
+
+model Purchase {
+  id             String         @id @default(uuid()) @db.Uuid
+  clientId       String         @db.Uuid
+  client         Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  scope          PurchaseScope
+  photoId        String?        @db.Uuid // set when scope = PHOTO
+  photo          Photo?         @relation("PurchasePhoto", fields: [photoId], references: [id], onDelete: Restrict)
+  albumId        String?        @db.Uuid // set when scope = ALBUM
+  album          Album?         @relation("PurchaseAlbum", fields: [albumId], references: [id], onDelete: Restrict)
+  packPhotoIds   Json?          @db.JsonB // PHOTO-id snapshot when scope = PACK
+  priceCents     Int
+  currency       String         @default("EUR")
+  status         PurchaseStatus @default(PENDING) // staff-confirmed; only COMPLETED grants entitlement
+  note           String?
+  completedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([clientId, status, createdAt(sort: Desc)])
+  @@index([albumId])
+  @@index([photoId])
+}
+
+// ---------------------------------------------------------------------------
+// Audit log — append-only, no update/delete surface
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id           String      @id @default(uuid()) @db.Uuid
+  actorId      String?     @db.Uuid
+  actor        User?       @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action       String // e.g. auth.login, photo.publish, album.share, purchase.complete
+  resourceType String
+  resourceId   String // polymorphic reference — no FK by design, never a secret
+  result       AuditResult
+  metadata     Json?       @db.JsonB // operational context only, never secrets
+  createdAt    DateTime    @default(now())
+
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([resourceType, resourceId])
+  @@index([createdAt(sort: Desc)])
+}
