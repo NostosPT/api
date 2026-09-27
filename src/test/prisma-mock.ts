@@ -181,6 +181,7 @@ export function resetMock(mock: MockPrisma): void {
 	mock.tag.rows.length = 0;
 	mock.category.rows.length = 0;
 	mock.photo.rows.length = 0;
+	mock.album.rows.length = 0;
 	mock.albumPhoto.rows.length = 0;
 	mock.galleryPhoto.rows.length = 0;
 	mock.purchasePhoto.rows.length = 0;
@@ -398,6 +399,7 @@ export interface MockPrisma {
 	tag: MockModel;
 	category: MockModel;
 	photo: MockModel;
+	album: MockModel;
 	albumPhoto: MockModel;
 	galleryPhoto: MockModel;
 	purchasePhoto: MockModel;
@@ -458,6 +460,21 @@ export function createMockPrisma(): MockPrisma {
 				"priceCents",
 			],
 			["number"],
+		),
+		album: new MockModel(
+			[["slug"]],
+			["createdAt", "updatedAt"],
+			[
+				"description",
+				"accessCodeHash",
+				"priceCents",
+				"packPriceCents",
+				"packSize",
+				"coverPhotoId",
+				"expiresAt",
+				"publishedAt",
+				"lastViewedAt",
+			],
 		),
 		albumPhoto: new MockModel([["albumId", "position"], ["albumId", "photoId"]], ["addedAt"]),
 		galleryPhoto: new MockModel([["galleryId", "position"], ["galleryId", "photoId"]], ["addedAt"]),
