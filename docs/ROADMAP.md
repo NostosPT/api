@@ -97,11 +97,9 @@ Favorites, minimal Purchase, AuditLog.
 [C] 2. SeaweedFS topology (single vs replicated) and backup story.
 [C] 3. Invoice provider choice (invoicexpress/moloni/vendus/toconline).
 [C] 4. Resend inbound domain + webhook secret rotation story.
-[B] 5. PHOTOGRAPHER photo scope: own photos only (`photographerId` = self) or
-   archive-wide edit (frontend says "own work" but grants archive edit)?
-[C] 6. 2FA scope: optional per-user vs mandatory ADMIN?
-[C] 7. Claim vector backend: pgvector vs external embeddings service?
-[C] 8. Analytics deferral approval (Phase 2 with documented minimal schema)?
+[C] 5. 2FA scope: optional per-user vs mandatory ADMIN?
+[C] 6. Claim vector backend: pgvector vs external embeddings service?
+[C] 7. Analytics deferral approval (Phase 2 with documented minimal schema)?
 
 A = schema blocker, B = Phase 1 implementation, C = Phase 2. Zero A items —
 nothing blocks Prisma schema creation.
@@ -110,7 +108,8 @@ Full format (options, recommended defaults, blockers) in `DECISIONS.md`.
 Resolved into Proposed/Confirmed: tag model, cookie strategy, session
 lifetimes, gallery/album semantics, album-code mandate (B for paid, A for
 FREE), lockout default (5 fails → 15 min backoff), entitlement semantics,
-client deletion, public service catalogue (option A).
+client deletion, public service catalogue (option A), PHOTOGRAPHER photo
+scope (own photos only).
 
 ## Future architecture considerations
 
