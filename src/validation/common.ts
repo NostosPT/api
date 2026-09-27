@@ -1,8 +1,8 @@
 import { Type } from "typebox";
-import type { Static } from "typebox";
-import type { Role, UserStatus } from "@prisma/client";
+import type { Static, TLiteral } from "typebox";
+import type { Role, UserStatus, ServiceRequestStage, LeadSource } from "@prisma/client";
 
-const UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+export const UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
 // Pattern (not `format: "uuid"`) so validation works without ajv-formats.
 export const IdParams = Type.Object({
@@ -36,6 +36,29 @@ export const RoleEnum = Type.Union(
 export const UserStatusEnum = Type.Union(
 	(["ACTIVE", "SUSPENDED"] as UserStatus[]).map((status) => Type.Literal(status)),
 );
+
+// Built from a const tuple (not `.map()`): TypeBox cannot infer a Static
+// union from a plain array, which would collapse these to `never`.
+const serviceRequestStageLiterals = [
+	Type.Literal("NEW"),
+	Type.Literal("QUALIFIED"),
+	Type.Literal("QUOTED"),
+	Type.Literal("BOOKED"),
+	Type.Literal("COMPLETED"),
+	Type.Literal("LOST"),
+] as const satisfies readonly TLiteral<ServiceRequestStage>[];
+
+const leadSourceLiterals = [
+	Type.Literal("WEBSITE"),
+	Type.Literal("EMAIL"),
+	Type.Literal("REFERRAL"),
+	Type.Literal("INSTAGRAM"),
+	Type.Literal("ARCHIVE"),
+] as const satisfies readonly TLiteral<LeadSource>[];
+
+export const ServiceRequestStageEnum = Type.Union([...serviceRequestStageLiterals]);
+
+export const LeadSourceEnum = Type.Union([...leadSourceLiterals]);
 
 export function normalizeEmail(email: string): string {
 	return email.trim().toLowerCase();

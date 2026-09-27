@@ -28,6 +28,7 @@ interface Operator {
 	gte?: Scalar;
 	lte?: Scalar;
 	in?: Scalar[];
+	startsWith?: string;
 }
 
 type Condition = Scalar | Operator;
@@ -71,6 +72,13 @@ function matchesCondition(actual: Scalar, condition: Condition): boolean {
 		}
 
 		if (condition.in !== undefined && !condition.in.some((value) => compareValues(actual, value) === 0)) {
+			return false;
+		}
+
+		if (
+			condition.startsWith !== undefined &&
+			!(typeof actual === "string" && actual.startsWith(condition.startsWith))
+		) {
 			return false;
 		}
 
@@ -127,6 +135,10 @@ export function resetMock(mock: MockPrisma): void {
 	mock.session.rows.length = 0;
 	mock.invite.rows.length = 0;
 	mock.auditLog.rows.length = 0;
+	mock.service.rows.length = 0;
+	mock.serviceRequest.rows.length = 0;
+	mock.client.rows.length = 0;
+	mock.requestNote.rows.length = 0;
 }
 
 class MockModel {
@@ -316,6 +328,10 @@ export interface MockPrisma {
 	session: MockModel;
 	invite: MockModel;
 	auditLog: MockModel;
+	service: MockModel;
+	serviceRequest: MockModel;
+	client: MockModel;
+	requestNote: MockModel;
 }
 
 export function createMockPrisma(): MockPrisma {
@@ -324,5 +340,34 @@ export function createMockPrisma(): MockPrisma {
 		session: new MockModel([["tokenHash"]], ["createdAt"], ["revokedAt", "ipHash", "uaHash"]),
 		invite: new MockModel([["tokenHash"]], ["createdAt"], ["acceptedAt", "invitedById"]),
 		auditLog: new MockModel([], ["createdAt"], ["actorId", "metadata"]),
+		service: new MockModel(
+			[["slug"], ["name"], ["position"]],
+			["createdAt", "updatedAt"],
+			["description", "priceFromCents", "priceToCents"],
+		),
+		serviceRequest: new MockModel(
+			[["reference"]],
+			["createdAt", "updatedAt"],
+			[
+				"serviceId",
+				"preferredDate",
+				"location",
+				"budgetMinCents",
+				"budgetMaxCents",
+				"estimateFromCents",
+				"estimateToCents",
+				"quoteCents",
+				"quoteId",
+				"assigneeId",
+				"source",
+				"lostReason",
+			],
+		),
+		client: new MockModel(
+			[["clientCode"], ["email"]],
+			["createdAt", "updatedAt"],
+			["phone", "company", "notes", "taxId", "address", "source", "lastContactAt", "deletedAt"],
+		),
+		requestNote: new MockModel([], ["createdAt"], ["authorId"]),
 	};
 }
