@@ -1,8 +1,9 @@
 // In-memory Prisma stand-in for inject() tests. Implements exactly the
 // operations repositories use (findUnique/findFirst/findMany/count/create/
-// update/updateMany/delete/deleteMany) with equality, null, gt/lt/in matching
-// plus orderBy/skip/take. Unique violations mimic P2002 so repository mapping
-// is exercised realistically. No PostgreSQL required.
+// update/updateMany/delete/deleteMany) with equality, null, gt/lt/in/
+// startsWith/contains (with insensitive mode)/not matching, OR/AND where
+// clauses plus orderBy/skip/take. Unique violations mimic P2002 so
+// repository mapping is exercised realistically. No PostgreSQL required.
 
 interface P2002Error {
 	code: "P2002";
@@ -28,9 +29,15 @@ interface Operator {
 	gte?: Scalar;
 	lte?: Scalar;
 	in?: Scalar[];
+	startsWith?: string;
+	contains?: string;
+	mode?: "insensitive" | "default";
+	not?: Scalar;
 }
 
 type Condition = Scalar | Operator;
+// OR/AND combine sub-clauses: { OR: [{ a: 1 }, { b: { contains: "x" } }] }.
+type WhereInput = Record<string, Condition | WhereInput[]>;
 
 function isOperator(value: Condition): value is Operator {
 	return typeof value === "object" && value !== null && !(value instanceof Date);
@@ -74,6 +81,31 @@ function matchesCondition(actual: Scalar, condition: Condition): boolean {
 			return false;
 		}
 
+		if (
+			condition.startsWith !== undefined &&
+			!(typeof actual === "string" && actual.startsWith(condition.startsWith))
+		) {
+			return false;
+		}
+
+		if (condition.contains !== undefined) {
+			if (typeof actual !== "string") {
+				return false;
+			}
+
+			const insensitive = condition.mode === "insensitive";
+			const haystack = insensitive ? actual.toLowerCase() : actual;
+			const needle = insensitive ? condition.contains.toLowerCase() : condition.contains;
+
+			if (!haystack.includes(needle)) {
+				return false;
+			}
+		}
+
+		if (condition.not !== undefined && compareValues(actual, condition.not) === 0) {
+			return false;
+		}
+
 		return true;
 	}
 
@@ -85,12 +117,26 @@ function matchesCondition(actual: Scalar, condition: Condition): boolean {
 	return compareValues(actual, condition) === 0;
 }
 
-function matchesWhere(row: RecordRow, where?: Record<string, Condition>): boolean {
+function matchesWhere(row: RecordRow, where?: WhereInput): boolean {
 	if (!where) {
 		return true;
 	}
 
-	return Object.entries(where).every(([field, condition]) => matchesCondition(row[field], condition));
+	return Object.entries(where).every(([field, condition]) => {
+		if (field === "OR" && Array.isArray(condition)) {
+			return condition.some((clause) => matchesWhere(row, clause));
+		}
+
+		if (field === "AND" && Array.isArray(condition)) {
+			return condition.every((clause) => matchesWhere(row, clause));
+		}
+
+		if (Array.isArray(condition)) {
+			return false;
+		}
+
+		return matchesCondition(row[field], condition);
+	});
 }
 
 interface OrderClause {
@@ -98,7 +144,7 @@ interface OrderClause {
 }
 
 interface FindManyArgs {
-	where?: Record<string, Condition>;
+	where?: WhereInput;
 	orderBy?: OrderClause | OrderClause[];
 	skip?: number;
 	take?: number;
@@ -127,6 +173,24 @@ export function resetMock(mock: MockPrisma): void {
 	mock.session.rows.length = 0;
 	mock.invite.rows.length = 0;
 	mock.auditLog.rows.length = 0;
+	mock.service.rows.length = 0;
+	mock.serviceRequest.rows.length = 0;
+	mock.client.rows.length = 0;
+	mock.requestNote.rows.length = 0;
+	mock.clientActivity.rows.length = 0;
+	mock.tag.rows.length = 0;
+	mock.category.rows.length = 0;
+	mock.photo.rows.length = 0;
+	mock.album.rows.length = 0;
+	mock.albumPhoto.rows.length = 0;
+	mock.favorite.rows.length = 0;
+	mock.purchase.rows.length = 0;
+mock.gallery.rows.length = 0;
+	mock.galleryPhoto.rows.length = 0;
+	mock.photoCategory.rows.length = 0;
+	mock.photoTag.rows.length = 0;
+	mock.albumTag.rows.length = 0;
+	mock.purchasePhoto.rows.length = 0;
 }
 
 class MockModel {
@@ -138,19 +202,32 @@ class MockModel {
 	// Nullable fields that should default to null when absent so null-checks
 	// in DTO code distinguish "column is null" from "column was not provided".
 	nullableFields: string[];
+	// Integer columns with @default(autoincrement()); the mock fills the next
+	// value from existing rows exactly like the sequence would.
+	autoIncrementFields: string[];
 
 	constructor(
 		uniqueFields: string[][] = [],
 		defaultTimestamps: string[] = ["createdAt", "updatedAt"],
 		nullableFields: string[] = [],
+		autoIncrementFields: string[] = [],
 	) {
 		this.uniqueFields = uniqueFields;
 		this.defaultTimestamps = defaultTimestamps;
 		this.nullableFields = nullableFields;
+		this.autoIncrementFields = autoIncrementFields;
 	}
 
 	private checkUnique(row: RecordRow, exclude?: RecordRow): void {
 		for (const fields of this.uniqueFields) {
+			// Postgres unique indexes treat NULLs as distinct: a NULL value in
+			// the new row can never violate a unique constraint.
+			const hasNull = fields.some((field) => row[field] === null || row[field] === undefined);
+
+			if (hasNull) {
+				continue;
+			}
+
 			const clash = this.rows.find(
 				(existing) =>
 					existing !== exclude &&
@@ -163,7 +240,7 @@ class MockModel {
 		}
 	}
 
-	findUnique(args: { where: Record<string, Condition>; select?: Record<string, boolean> }): RecordRow | null {
+	findUnique(args: { where: WhereInput; select?: Record<string, boolean> }): RecordRow | null {
 		const found = this.rows.find((row) => matchesWhere(row, args.where)) ?? null;
 
 		if (found === null) {
@@ -174,7 +251,7 @@ class MockModel {
 	}
 
 	findFirst(args: {
-		where?: Record<string, Condition>;
+		where?: WhereInput;
 		orderBy?: OrderClause | OrderClause[];
 		select?: Record<string, boolean>;
 	}): RecordRow | null {
@@ -213,7 +290,7 @@ class MockModel {
 		return result.map((row) => ({ ...row }));
 	}
 
-	count(args: { where?: Record<string, Condition> } = {}): number {
+	count(args: { where?: WhereInput } = {}): number {
 		return this.rows.filter((row) => matchesWhere(row, args.where)).length;
 	}
 
@@ -238,13 +315,25 @@ class MockModel {
 			}
 		}
 
+		for (const field of this.autoIncrementFields) {
+			if (row[field] === undefined) {
+				const max = this.rows.reduce(
+					(highest, existing) => typeof existing[field] === "number" && existing[field] > highest
+						? existing[field] as number
+						: highest,
+					0,
+				);
+				row[field] = max + 1;
+			}
+		}
+
 		this.checkUnique(row);
 		this.rows.push(row);
 
 		return this.project(row, args.select);
 	}
 
-	update(args: { where: Record<string, Condition>; data: RecordRow }): RecordRow {
+	update(args: { where?: WhereInput; data: RecordRow }): RecordRow {
 		const row = this.rows.find((candidate) => matchesWhere(candidate, args.where));
 
 		if (!row) {
@@ -262,7 +351,7 @@ class MockModel {
 		return { ...row };
 	}
 
-	updateMany(args: { where?: Record<string, Condition>; data: RecordRow }): { count: number } {
+	updateMany(args: { where?: WhereInput; data: RecordRow }): { count: number } {
 		let count = 0;
 
 		for (const row of this.rows) {
@@ -275,7 +364,7 @@ class MockModel {
 		return { count };
 	}
 
-	delete(args: { where: Record<string, Condition> }): RecordRow {
+	delete(args: { where?: WhereInput }): RecordRow {
 		const index = this.rows.findIndex((row) => matchesWhere(row, args.where));
 
 		if (index === -1) {
@@ -287,7 +376,7 @@ class MockModel {
 		return { ...removed };
 	}
 
-	deleteMany(args: { where?: Record<string, Condition> }): { count: number } {
+	deleteMany(args: { where?: WhereInput }): { count: number } {
 		const before = this.rows.length;
 		this.rows = this.rows.filter((row) => !matchesWhere(row, args.where));
 
@@ -316,13 +405,111 @@ export interface MockPrisma {
 	session: MockModel;
 	invite: MockModel;
 	auditLog: MockModel;
+	service: MockModel;
+	serviceRequest: MockModel;
+	client: MockModel;
+	requestNote: MockModel;
+	clientActivity: MockModel;
+	tag: MockModel;
+	category: MockModel;
+	photo: MockModel;
+	album: MockModel;
+	albumPhoto: MockModel;
+	albumTag: MockModel;
+	favorite: MockModel;
+	purchase: MockModel;
+	gallery: MockModel;
+	galleryPhoto: MockModel;
+	photoCategory: MockModel;
+	photoTag: MockModel;
+	purchasePhoto: MockModel;
+	$transaction: <T>(fn: (tx: MockPrisma) => Promise<T>) => Promise<T>;
 }
 
 export function createMockPrisma(): MockPrisma {
-	return {
+	const mock: MockPrisma = {
 		user: new MockModel([["email"]], ["createdAt", "updatedAt"]),
 		session: new MockModel([["tokenHash"]], ["createdAt"], ["revokedAt", "ipHash", "uaHash"]),
 		invite: new MockModel([["tokenHash"]], ["createdAt"], ["acceptedAt", "invitedById"]),
 		auditLog: new MockModel([], ["createdAt"], ["actorId", "metadata"]),
+		service: new MockModel(
+			[["slug"], ["name"], ["position"]],
+			["createdAt", "updatedAt"],
+			["description", "priceFromCents", "priceToCents"],
+		),
+		serviceRequest: new MockModel(
+			[["reference"]],
+			["createdAt", "updatedAt"],
+			[
+				"serviceId",
+				"preferredDate",
+				"location",
+				"budgetMinCents",
+				"budgetMaxCents",
+				"estimateFromCents",
+				"estimateToCents",
+				"quoteCents",
+				"quoteId",
+				"assigneeId",
+				"source",
+				"lostReason",
+			],
+		),
+		client: new MockModel(
+			[["clientCode"], ["email"]],
+			["createdAt", "updatedAt"],
+			["phone", "company", "notes", "taxId", "address", "source", "lastContactAt", "deletedAt"],
+		),
+		requestNote: new MockModel([], ["createdAt"], ["authorId"]),
+		clientActivity: new MockModel([], ["createdAt"], ["body", "href", "authorId"]),
+		tag: new MockModel([["slug"], ["name"]], ["createdAt", "updatedAt"], ["description"]),
+		category: new MockModel([["slug"], ["name"], ["position"]], ["createdAt", "updatedAt"], ["description"]),
+		photo: new MockModel(
+			[["number"], ["originalKey"]],
+			["createdAt", "updatedAt"],
+			[
+				"title",
+				"description",
+				"displayKey",
+				"thumbnailKey",
+				"width",
+				"height",
+				"takenAt",
+				"location",
+				"photographerId",
+				"priceCents",
+			],
+			["number"],
+		),
+		album: new MockModel(
+			[["slug"]],
+			["createdAt", "updatedAt"],
+			[
+				"description",
+				"accessCodeHash",
+				"priceCents",
+				"packPriceCents",
+				"packSize",
+				"coverPhotoId",
+				"expiresAt",
+				"publishedAt",
+				"lastViewedAt",
+			],
+		),
+		albumPhoto: new MockModel([["albumId", "position"], ["albumId", "photoId"]], ["addedAt"]),
+		favorite: new MockModel([["clientId", "albumId", "photoId"]], ["createdAt"]),
+		purchase: new MockModel([], ["createdAt", "updatedAt"], ["note", "completedAt"]),
+		gallery: new MockModel([["slug"], ["position"]], ["createdAt", "updatedAt"], ["description", "position"]),
+		galleryPhoto: new MockModel([["galleryId", "position"], ["galleryId", "photoId"]], ["addedAt"]),
+		photoCategory: new MockModel([["photoId", "categoryId"]], []),
+		photoTag: new MockModel([["photoId", "tagId"]], []),
+		albumTag: new MockModel([["albumId", "tagId"]], []),
+		purchasePhoto: new MockModel([["purchaseId", "photoId"]], ["addedAt"]),
+		// All models share one row store, so the callback receives the same mock.
+		$transaction: async function $transaction<T>(fn: (tx: MockPrisma) => Promise<T>): Promise<T> {
+			return fn(mock);
+		},
 	};
+
+	return mock;
 }

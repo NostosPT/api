@@ -22,6 +22,11 @@ decision, the concrete reason, and what was rejected. Open items are marked
   port interface so the implementation can be replaced without rewriting the
   photo domain. Originals private; controlled/presigned reads only; API never
   proxies large bytes.
+* **Presigning via the official AWS SDK.** `@aws-sdk/client-s3` +
+  `@aws-sdk/s3-request-presigner` sign PUT/GET URLs for the S3-compatible
+  endpoint (SeaweedFS implements the S3 API). Rejected: hand-rolled SigV4 in
+  repo code — crypto-heavy, easy to get subtly wrong, and the SDK is the
+  standard, well-tested path.
 * **API-owned opaque sessions, no JWT.** 256-bit `crypto.randomBytes` token,
   SHA-512 hash stored in `Session`, raw token only in HttpOnly cookie
   (`Secure` in prod, `SameSite=Lax`, `Path=/`). No PII in the cookie, unlike
@@ -152,6 +157,11 @@ decision, the concrete reason, and what was rejected. Open items are marked
   PostgreSQL (+ storage reachability) and returns 200/503 without internals.
 * **Tests: Vitest + Fastify `inject()`.** No Supertest without a concrete
   requirement.
+* **Public service catalogue is public (option A, confirmed).** `GET /v1/services`
+  (list) and `GET /v1/services/:slug` serve without authentication: prices are
+  marketing, and the public intake flow (`POST /v1/service-requests`) resolves
+  requests by service slug, so the site needs catalogue discovery. Rejected:
+  authenticated-only catalogue (would block site integration until Phase 2).
 
 ## Permission matrix (Phase 1)
 
@@ -171,6 +181,7 @@ CUD+P on its Phase 1 domains, `view` ⇒ R, `none` ⇒ —.
 | Services catalogue | M | R | R | R | — |
 | Service Requests | M | R | R | CUD+R | R |
 | Tags | M | CUD+R | CUD+R | R | R (via clients) |
+| Categories | M | CUD+R | CUD+R | R | R |
 | Photos | M | CUD+P | CUD+P | R | — |
 | Public gallery curation (publish/feature) | M | P | P | R | — |
 | Albums (share/rotate) | M | CUD+P | R | CUD+P | — |
@@ -183,9 +194,8 @@ ACCOUNTANT's `finance: edit` activates then; in Phase 1 ACCOUNTANT is
 effectively read-only (Clients, Requests, Users-via-nothing, Tags-via-clients)
 because the frontend establishes no other Phase 1 write for the role.
 ASSISTANT's `finance: view` likewise activates in Phase 2.
-Note: PHOTOGRAPHER "own work" vs archive-wide edit scope is `DECISION
-REQUIRED` (item 8 below) — the matrix above reflects area access, ownership
-scoping to be fixed at implementation.
+Note: PHOTOGRAPHER acts on own photos only (`photographerId` = self, decided);
+ADMIN and EDITOR act archive-wide. The matrix above reflects area access.
 
 ## Unresolved (`DECISION REQUIRED` — genuine owner choices only)
 
@@ -198,34 +208,29 @@ PHOTOGRAPHER scope is app-logic over the existing `photographerId`).
 [C] 1. **2FA scope.** Why: determines login flow and ADMIN onboarding risk.
    A: optional per-user. B: mandatory ADMIN. Recommended default: B.
    Blocking: auth implementation details.
-[B] 2. **PHOTOGRAPHER photo scope.** Why: "own work" vs archive-wide edit
-   conflict in current frontend. A: own photos only. B: archive-wide.
-   Recommended default: none — real conflict, owner decides. Blocking:
-   photo/albums authorization rules.
-[C] 3. **Claim vector backend.** Why: pgvector keeps data local; external
+[C] 2. **Claim vector backend.** Why: pgvector keeps data local; external
    service offloads ops but moves images out. A: pgvector. B: external
    embeddings. Recommended default: A (self-hosted posture). Blocking:
    Phase 2 Claim design only.
-[C] 4. **Analytics deferral.** Why: privacy surface vs dashboard metrics appetite.
+[C] 3. **Analytics deferral.** Why: privacy surface vs dashboard metrics appetite.
    A: defer to Phase 2 (recommended). B: minimal Phase 1 events. Blocking:
    nothing in Phase 1 either way.
-[B] 5. **Public portfolio endpoints timing.** Why: site launch may need them
+[B] 4. **Public portfolio endpoints timing.** Why: site launch may need them
    early. A: Phase 1. B: Phase 2 (recommended). Blocking: site launch plan.
-[B] 6. **Public service catalogue.** Why: `GET /v1/services/all` without auth
-   exposes pricing. A: public (recommended, prices are marketing).
-   B: authenticated. Blocking: site catalogue integration.
-[C] 7. **SeaweedFS topology/backups.** Why: durability/ops is owner infra.
+[C] 5. **SeaweedFS topology/backups.** Why: durability/ops is owner infra.
    A: single node + snapshots. B: replicated + off-site backups
    (recommended). Blocking: deploy design.
-[C] 8. **Invoice provider.** Why: provider choice shapes Documents integration.
+[C] 6. **Invoice provider.** Why: provider choice shapes Documents integration.
    A/B: invoicexpress / moloni / vendus / toconline — no default offered;
    owner decides. Blocking: Phase 2 finance only.
-[C] 9. **Resend inbound story.** Why: domain + secret rotation affect mail
+[C] 7. **Resend inbound story.** Why: domain + secret rotation affect mail
    design. A/B: owner provides domain and rotation policy. Blocking:
    Phase 2 mail only.
 
 Resolved out of this list (now Proposed or Confirmed): tag model, cookie
 strategy, session lifetimes, gallery/album semantics, album-code mandate
 (B for paid, A for FREE), lockout (default: 5 fails → 15 min backoff,
-env-configurable), pack/album entitlement semantics, client deletion.
+env-configurable), pack/album entitlement semantics, client deletion,
+public service catalogue (option A: public list + slug detail),
+PHOTOGRAPHER photo scope (own photos only, `photographerId` = self).
 

@@ -52,6 +52,7 @@ export interface EnvConfig {
 	S3_ACCESS_KEY_ID: string | undefined;
 	S3_SECRET_ACCESS_KEY: string | undefined;
 	S3_PUBLIC_ENDPOINT: string | undefined;
+	SITE_COPYRIGHT: string | undefined;
 }
 
 export interface AppConfig {

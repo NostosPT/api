@@ -5,3 +5,4 @@ process.env.NODE_ENV ??= "test";
 process.env.DATABASE_URL ??= "postgresql://nostos:nostos@localhost:5432/nostos_test";
 process.env.COOKIE_SECRET ??= "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 process.env.CORS_ORIGINS ??= "https://app.example.com";
+process.env.SITE_COPYRIGHT ??= "© Nostos Studio";
