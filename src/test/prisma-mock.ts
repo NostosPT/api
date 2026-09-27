@@ -185,7 +185,7 @@ export function resetMock(mock: MockPrisma): void {
 	mock.albumPhoto.rows.length = 0;
 	mock.favorite.rows.length = 0;
 	mock.purchase.rows.length = 0;
-	mock.purchasePhoto.rows.length = 0;
+	mock.gallery.rows.length = 0;
 	mock.galleryPhoto.rows.length = 0;
 	mock.purchasePhoto.rows.length = 0;
 }
@@ -217,6 +217,14 @@ class MockModel {
 
 	private checkUnique(row: RecordRow, exclude?: RecordRow): void {
 		for (const fields of this.uniqueFields) {
+			// Postgres unique indexes treat NULLs as distinct: a NULL value in
+			// the new row can never violate a unique constraint.
+			const hasNull = fields.some((field) => row[field] === null || row[field] === undefined);
+
+			if (hasNull) {
+				continue;
+			}
+
 			const clash = this.rows.find(
 				(existing) =>
 					existing !== exclude &&
@@ -406,6 +414,7 @@ export interface MockPrisma {
 	albumPhoto: MockModel;
 	favorite: MockModel;
 	purchase: MockModel;
+	gallery: MockModel;
 	galleryPhoto: MockModel;
 	purchasePhoto: MockModel;
 	$transaction: <T>(fn: (tx: MockPrisma) => Promise<T>) => Promise<T>;
@@ -484,6 +493,7 @@ export function createMockPrisma(): MockPrisma {
 		albumPhoto: new MockModel([["albumId", "position"], ["albumId", "photoId"]], ["addedAt"]),
 		favorite: new MockModel([["clientId", "albumId", "photoId"]], ["createdAt"]),
 		purchase: new MockModel([], ["createdAt", "updatedAt"], ["note", "completedAt"]),
+		gallery: new MockModel([["slug"], ["position"]], ["createdAt", "updatedAt"], ["description", "position"]),
 		galleryPhoto: new MockModel([["galleryId", "position"], ["galleryId", "photoId"]], ["addedAt"]),
 		purchasePhoto: new MockModel([["purchaseId", "photoId"]], ["addedAt"]),
 		// All models share one row store, so the callback receives the same mock.
