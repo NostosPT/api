@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import type { Static, TLiteral, TSchema } from "typebox";
-import type { Role, UserStatus, ServiceRequestStage, LeadSource, ClientStatus, TagStatus, TagVisibility, PhotoStatus, Visibility, Availability, UploadStatus, AlbumType, AlbumStatus } from "@prisma/client";
+import type { Role, UserStatus, ServiceRequestStage, LeadSource, ClientStatus, TagStatus, TagVisibility, PhotoStatus, Visibility, Availability, UploadStatus, AlbumType, AlbumStatus, PurchaseScope, PurchaseStatus } from "@prisma/client";
 
 export const UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
@@ -135,6 +135,23 @@ const albumStatusLiterals = [
 export const AlbumTypeEnum = Type.Union([...albumTypeLiterals]);
 
 export const AlbumStatusEnum = Type.Union([...albumStatusLiterals]);
+
+const purchaseScopeLiterals = [
+	Type.Literal("PHOTO"),
+	Type.Literal("PACK"),
+	Type.Literal("ALBUM"),
+] as const satisfies readonly TLiteral<PurchaseScope>[];
+
+const purchaseStatusLiterals = [
+	Type.Literal("PENDING"),
+	Type.Literal("COMPLETED"),
+	Type.Literal("FAILED"),
+	Type.Literal("REFUNDED"),
+] as const satisfies readonly TLiteral<PurchaseStatus>[];
+
+export const PurchaseScopeEnum = Type.Union([...purchaseScopeLiterals]);
+
+export const PurchaseStatusEnum = Type.Union([...purchaseStatusLiterals]);
 
 // Pattern (not `format: "date-time"`) so validation works without ajv-formats.
 export const IsoDateTimeString = Type.String({
