@@ -178,6 +178,8 @@ export function resetMock(mock: MockPrisma): void {
 	mock.client.rows.length = 0;
 	mock.requestNote.rows.length = 0;
 	mock.clientActivity.rows.length = 0;
+	mock.tag.rows.length = 0;
+	mock.category.rows.length = 0;
 }
 
 class MockModel {
@@ -372,10 +374,13 @@ export interface MockPrisma {
 	client: MockModel;
 	requestNote: MockModel;
 	clientActivity: MockModel;
+	tag: MockModel;
+	category: MockModel;
+	$transaction: <T>(fn: (tx: MockPrisma) => Promise<T>) => Promise<T>;
 }
 
 export function createMockPrisma(): MockPrisma {
-	return {
+	const mock: MockPrisma = {
 		user: new MockModel([["email"]], ["createdAt", "updatedAt"]),
 		session: new MockModel([["tokenHash"]], ["createdAt"], ["revokedAt", "ipHash", "uaHash"]),
 		invite: new MockModel([["tokenHash"]], ["createdAt"], ["acceptedAt", "invitedById"]),
@@ -410,5 +415,13 @@ export function createMockPrisma(): MockPrisma {
 		),
 		requestNote: new MockModel([], ["createdAt"], ["authorId"]),
 		clientActivity: new MockModel([], ["createdAt"], ["body", "href", "authorId"]),
+		tag: new MockModel([["slug"], ["name"]], ["createdAt", "updatedAt"], ["description"]),
+		category: new MockModel([["slug"], ["name"], ["position"]], ["createdAt", "updatedAt"], ["description"]),
+		// All models share one row store, so the callback receives the same mock.
+		$transaction: async function $transaction<T>(fn: (tx: MockPrisma) => Promise<T>): Promise<T> {
+			return fn(mock);
+		},
 	};
+
+	return mock;
 }

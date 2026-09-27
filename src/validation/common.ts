@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import type { Static, TLiteral, TSchema } from "typebox";
-import type { Role, UserStatus, ServiceRequestStage, LeadSource, ClientStatus } from "@prisma/client";
+import type { Role, UserStatus, ServiceRequestStage, LeadSource, ClientStatus, TagStatus, TagVisibility } from "@prisma/client";
 
 export const UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
@@ -67,6 +67,26 @@ export const ServiceRequestStageEnum = Type.Union([...serviceRequestStageLiteral
 export const LeadSourceEnum = Type.Union([...leadSourceLiterals]);
 
 export const ClientStatusEnum = Type.Union([...clientStatusLiterals]);
+
+// Tag and Category statuses are both ACTIVE|INACTIVE; one literal tuple
+// feeds both exports so the unions stay in lockstep.
+const activeInactiveLiterals = [
+	Type.Literal("ACTIVE"),
+	Type.Literal("INACTIVE"),
+] as const satisfies readonly TLiteral<TagStatus>[];
+
+const tagVisibilityLiterals = [
+	Type.Literal("PUBLIC"),
+	Type.Literal("INTERNAL"),
+] as const satisfies readonly TLiteral<TagVisibility>[];
+
+export const TagStatusEnum = Type.Union([...activeInactiveLiterals]);
+
+export const CategoryStatusEnum = Type.Union([...activeInactiveLiterals]);
+
+export const TagVisibilityEnum = Type.Union([...tagVisibilityLiterals]);
+
+export const SlugString = Type.String({ pattern: "^[a-z0-9-]+$", minLength: 1, maxLength: 64 });
 
 // Optional field that also accepts explicit null so PATCH bodies can clear
 // stored nullable values.
