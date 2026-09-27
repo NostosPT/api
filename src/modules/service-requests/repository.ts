@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { ServiceRequest, ServiceRequestStage, LeadSource, Client } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { ConflictError } from "../../errors/appError.js";
+import { generateNextClientCode } from "../clients/repository.js";
 
 export interface CreateServiceRequestInput {
 	reference: string;
@@ -89,7 +90,6 @@ export async function findClientByEmail(email: string) {
 }
 
 export async function createClient(input: { email: string; name: string; phone?: string | null; company?: string | null; notes?: string | null; taxId?: string | null; address?: string | null; source: "WEBSITE" | "EMAIL" | "REFERRAL" | "INSTAGRAM" | "ARCHIVE"; status: "LEAD" | "ACTIVE" | "PAST" }): Promise<Client> {
-	const { randomUUID } = await import("node:crypto");
 	return prisma.client.create({
 		data: {
 			email: input.email,
@@ -104,7 +104,7 @@ export async function createClient(input: { email: string; name: string; phone?:
 			lastContactAt: new Date(),
 			createdAt: new Date(),
 			updatedAt: new Date(),
-			clientCode: `CLI-${randomUUID().slice(0, 8).toUpperCase()}`,
+			clientCode: await generateNextClientCode(),
 		},
 	});
 }

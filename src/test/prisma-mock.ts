@@ -1,8 +1,9 @@
 // In-memory Prisma stand-in for inject() tests. Implements exactly the
 // operations repositories use (findUnique/findFirst/findMany/count/create/
-// update/updateMany/delete/deleteMany) with equality, null, gt/lt/in matching
-// plus orderBy/skip/take. Unique violations mimic P2002 so repository mapping
-// is exercised realistically. No PostgreSQL required.
+// update/updateMany/delete/deleteMany) with equality, null, gt/lt/in/
+// startsWith/contains (with insensitive mode)/not matching, OR/AND where
+// clauses plus orderBy/skip/take. Unique violations mimic P2002 so
+// repository mapping is exercised realistically. No PostgreSQL required.
 
 interface P2002Error {
 	code: "P2002";
@@ -29,9 +30,14 @@ interface Operator {
 	lte?: Scalar;
 	in?: Scalar[];
 	startsWith?: string;
+	contains?: string;
+	mode?: "insensitive" | "default";
+	not?: Scalar;
 }
 
 type Condition = Scalar | Operator;
+// OR/AND combine sub-clauses: { OR: [{ a: 1 }, { b: { contains: "x" } }] }.
+type WhereInput = Record<string, Condition | WhereInput[]>;
 
 function isOperator(value: Condition): value is Operator {
 	return typeof value === "object" && value !== null && !(value instanceof Date);
@@ -82,6 +88,24 @@ function matchesCondition(actual: Scalar, condition: Condition): boolean {
 			return false;
 		}
 
+		if (condition.contains !== undefined) {
+			if (typeof actual !== "string") {
+				return false;
+			}
+
+			const insensitive = condition.mode === "insensitive";
+			const haystack = insensitive ? actual.toLowerCase() : actual;
+			const needle = insensitive ? condition.contains.toLowerCase() : condition.contains;
+
+			if (!haystack.includes(needle)) {
+				return false;
+			}
+		}
+
+		if (condition.not !== undefined && compareValues(actual, condition.not) === 0) {
+			return false;
+		}
+
 		return true;
 	}
 
@@ -93,12 +117,26 @@ function matchesCondition(actual: Scalar, condition: Condition): boolean {
 	return compareValues(actual, condition) === 0;
 }
 
-function matchesWhere(row: RecordRow, where?: Record<string, Condition>): boolean {
+function matchesWhere(row: RecordRow, where?: WhereInput): boolean {
 	if (!where) {
 		return true;
 	}
 
-	return Object.entries(where).every(([field, condition]) => matchesCondition(row[field], condition));
+	return Object.entries(where).every(([field, condition]) => {
+		if (field === "OR" && Array.isArray(condition)) {
+			return condition.some((clause) => matchesWhere(row, clause));
+		}
+
+		if (field === "AND" && Array.isArray(condition)) {
+			return condition.every((clause) => matchesWhere(row, clause));
+		}
+
+		if (Array.isArray(condition)) {
+			return false;
+		}
+
+		return matchesCondition(row[field], condition);
+	});
 }
 
 interface OrderClause {
@@ -106,7 +144,7 @@ interface OrderClause {
 }
 
 interface FindManyArgs {
-	where?: Record<string, Condition>;
+	where?: WhereInput;
 	orderBy?: OrderClause | OrderClause[];
 	skip?: number;
 	take?: number;
@@ -139,6 +177,7 @@ export function resetMock(mock: MockPrisma): void {
 	mock.serviceRequest.rows.length = 0;
 	mock.client.rows.length = 0;
 	mock.requestNote.rows.length = 0;
+	mock.clientActivity.rows.length = 0;
 }
 
 class MockModel {
@@ -175,7 +214,7 @@ class MockModel {
 		}
 	}
 
-	findUnique(args: { where: Record<string, Condition>; select?: Record<string, boolean> }): RecordRow | null {
+	findUnique(args: { where: WhereInput; select?: Record<string, boolean> }): RecordRow | null {
 		const found = this.rows.find((row) => matchesWhere(row, args.where)) ?? null;
 
 		if (found === null) {
@@ -186,7 +225,7 @@ class MockModel {
 	}
 
 	findFirst(args: {
-		where?: Record<string, Condition>;
+		where?: WhereInput;
 		orderBy?: OrderClause | OrderClause[];
 		select?: Record<string, boolean>;
 	}): RecordRow | null {
@@ -225,7 +264,7 @@ class MockModel {
 		return result.map((row) => ({ ...row }));
 	}
 
-	count(args: { where?: Record<string, Condition> } = {}): number {
+	count(args: { where?: WhereInput } = {}): number {
 		return this.rows.filter((row) => matchesWhere(row, args.where)).length;
 	}
 
@@ -256,7 +295,7 @@ class MockModel {
 		return this.project(row, args.select);
 	}
 
-	update(args: { where: Record<string, Condition>; data: RecordRow }): RecordRow {
+	update(args: { where?: WhereInput; data: RecordRow }): RecordRow {
 		const row = this.rows.find((candidate) => matchesWhere(candidate, args.where));
 
 		if (!row) {
@@ -274,7 +313,7 @@ class MockModel {
 		return { ...row };
 	}
 
-	updateMany(args: { where?: Record<string, Condition>; data: RecordRow }): { count: number } {
+	updateMany(args: { where?: WhereInput; data: RecordRow }): { count: number } {
 		let count = 0;
 
 		for (const row of this.rows) {
@@ -287,7 +326,7 @@ class MockModel {
 		return { count };
 	}
 
-	delete(args: { where: Record<string, Condition> }): RecordRow {
+	delete(args: { where?: WhereInput }): RecordRow {
 		const index = this.rows.findIndex((row) => matchesWhere(row, args.where));
 
 		if (index === -1) {
@@ -299,7 +338,7 @@ class MockModel {
 		return { ...removed };
 	}
 
-	deleteMany(args: { where?: Record<string, Condition> }): { count: number } {
+	deleteMany(args: { where?: WhereInput }): { count: number } {
 		const before = this.rows.length;
 		this.rows = this.rows.filter((row) => !matchesWhere(row, args.where));
 
@@ -332,6 +371,7 @@ export interface MockPrisma {
 	serviceRequest: MockModel;
 	client: MockModel;
 	requestNote: MockModel;
+	clientActivity: MockModel;
 }
 
 export function createMockPrisma(): MockPrisma {
@@ -369,5 +409,6 @@ export function createMockPrisma(): MockPrisma {
 			["phone", "company", "notes", "taxId", "address", "source", "lastContactAt", "deletedAt"],
 		),
 		requestNote: new MockModel([], ["createdAt"], ["authorId"]),
+		clientActivity: new MockModel([], ["createdAt"], ["body", "href", "authorId"]),
 	};
 }

@@ -1,6 +1,6 @@
 import { Type } from "typebox";
-import type { Static, TLiteral } from "typebox";
-import type { Role, UserStatus, ServiceRequestStage, LeadSource } from "@prisma/client";
+import type { Static, TLiteral, TSchema } from "typebox";
+import type { Role, UserStatus, ServiceRequestStage, LeadSource, ClientStatus } from "@prisma/client";
 
 export const UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
@@ -56,9 +56,23 @@ const leadSourceLiterals = [
 	Type.Literal("ARCHIVE"),
 ] as const satisfies readonly TLiteral<LeadSource>[];
 
+const clientStatusLiterals = [
+	Type.Literal("LEAD"),
+	Type.Literal("ACTIVE"),
+	Type.Literal("PAST"),
+] as const satisfies readonly TLiteral<ClientStatus>[];
+
 export const ServiceRequestStageEnum = Type.Union([...serviceRequestStageLiterals]);
 
 export const LeadSourceEnum = Type.Union([...leadSourceLiterals]);
+
+export const ClientStatusEnum = Type.Union([...clientStatusLiterals]);
+
+// Optional field that also accepts explicit null so PATCH bodies can clear
+// stored nullable values.
+export function OptionalOrNull<T extends TSchema>(schema: T) {
+	return Type.Optional(Type.Union([schema, Type.Null()]));
+}
 
 export function normalizeEmail(email: string): string {
 	return email.trim().toLowerCase();
