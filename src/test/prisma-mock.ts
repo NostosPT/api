@@ -185,8 +185,10 @@ export function resetMock(mock: MockPrisma): void {
 	mock.albumPhoto.rows.length = 0;
 	mock.favorite.rows.length = 0;
 	mock.purchase.rows.length = 0;
-	mock.gallery.rows.length = 0;
+mock.gallery.rows.length = 0;
 	mock.galleryPhoto.rows.length = 0;
+	mock.photoCategory.rows.length = 0;
+	mock.photoTag.rows.length = 0;
 	mock.purchasePhoto.rows.length = 0;
 }
 
@@ -416,6 +418,8 @@ export interface MockPrisma {
 	purchase: MockModel;
 	gallery: MockModel;
 	galleryPhoto: MockModel;
+	photoCategory: MockModel;
+	photoTag: MockModel;
 	purchasePhoto: MockModel;
 	$transaction: <T>(fn: (tx: MockPrisma) => Promise<T>) => Promise<T>;
 }
@@ -495,6 +499,8 @@ export function createMockPrisma(): MockPrisma {
 		purchase: new MockModel([], ["createdAt", "updatedAt"], ["note", "completedAt"]),
 		gallery: new MockModel([["slug"], ["position"]], ["createdAt", "updatedAt"], ["description", "position"]),
 		galleryPhoto: new MockModel([["galleryId", "position"], ["galleryId", "photoId"]], ["addedAt"]),
+		photoCategory: new MockModel([["photoId", "categoryId"]]),
+		photoTag: new MockModel([["photoId", "tagId"]]),
 		purchasePhoto: new MockModel([["purchaseId", "photoId"]], ["addedAt"]),
 		// All models share one row store, so the callback receives the same mock.
 		$transaction: async function $transaction<T>(fn: (tx: MockPrisma) => Promise<T>): Promise<T> {

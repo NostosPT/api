@@ -115,5 +115,6 @@ export function validateEnv(): EnvConfig {
 		S3_ACCESS_KEY_ID: optional(process.env.S3_ACCESS_KEY_ID),
 		S3_SECRET_ACCESS_KEY: optional(process.env.S3_SECRET_ACCESS_KEY),
 		S3_PUBLIC_ENDPOINT: optional(process.env.S3_PUBLIC_ENDPOINT),
+		SITE_COPYRIGHT: optional(process.env.SITE_COPYRIGHT),
 	};
 }
