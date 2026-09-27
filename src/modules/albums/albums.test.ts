@@ -480,3 +480,106 @@ describe("album archive and permission matrix", () => {
 		expect(photographerCreate.statusCode).toBe(201);
 	});
 });
+
+describe("album tag assignment", () => {
+	let albumId = "";
+	let tagId = "";
+
+	beforeEach(async () => {
+		const admin = await seedUser(mock, { email: "admin@test.com", role: "ADMIN" });
+		const adminC = sessionCookie(await seedSession(mock, admin.id));
+
+		const client = await app.inject({
+			method: "POST",
+			url: "/v1/clients",
+			headers: { cookie: adminC },
+			payload: { name: "Test Client", email: "test@example.com" },
+		});
+		clientId = client.json().id;
+
+		const album = await app.inject({
+			method: "POST",
+			url: "/v1/albums",
+			headers: { cookie: adminC },
+			payload: { clientId, title: "Test Album", type: "FREE" },
+		});
+		albumId = album.json().id;
+
+		const tag = mock.tag.create({
+			data: { name: "Wedding", slug: "wedding", status: "ACTIVE", visibility: "PUBLIC" },
+		}) as { id: string };
+		tagId = tag.id;
+	});
+
+	it("assigns and removes a tag", async () => {
+		const add = await app.inject({
+			method: "POST",
+			url: `/v1/albums/${albumId}/tags/${tagId}`,
+			headers: { cookie: adminCookie },
+		});
+		expect(add.statusCode).toBe(200);
+		expect(add.json()).toEqual({ status: "added" });
+		expect(auditActions(mock)).toContain("albums.tags.add");
+
+		const duplicate = await app.inject({
+			method: "POST",
+			url: `/v1/albums/${albumId}/tags/${tagId}`,
+			headers: { cookie: adminCookie },
+		});
+		expect(duplicate.statusCode).toBe(200);
+
+		const remove = await app.inject({
+			method: "DELETE",
+			url: `/v1/albums/${albumId}/tags/${tagId}`,
+			headers: { cookie: adminCookie },
+		});
+		expect(remove.statusCode).toBe(200);
+		expect(remove.json()).toEqual({ status: "removed" });
+		expect(auditActions(mock)).toContain("albums.tags.remove");
+	});
+
+	it("returns 404 for unknown tag", async () => {
+		const res = await app.inject({
+			method: "POST",
+			url: `/v1/albums/${albumId}/tags/00000000-0000-4000-8000-000000000042`,
+			headers: { cookie: adminCookie },
+		});
+		expect(res.statusCode).toBe(404);
+	});
+
+	it("allows PHOTOGRAPHER to assign tags", async () => {
+		const res = await app.inject({
+			method: "POST",
+			url: `/v1/albums/${albumId}/tags/${tagId}`,
+			headers: { cookie: photographerCookie },
+		});
+		expect(res.statusCode).toBe(200);
+	});
+
+	it("allows ASSISTANT to assign tags", async () => {
+		const res = await app.inject({
+			method: "POST",
+			url: `/v1/albums/${albumId}/tags/${tagId}`,
+			headers: { cookie: assistantCookie },
+		});
+		expect(res.statusCode).toBe(200);
+	});
+
+	it("denies EDITOR tag assignment", async () => {
+		const res = await app.inject({
+			method: "POST",
+			url: `/v1/albums/${albumId}/tags/${tagId}`,
+			headers: { cookie: editorCookie },
+		});
+		expect(res.statusCode).toBe(403);
+	});
+
+	it("denies ACCOUNTANT tag assignment", async () => {
+		const res = await app.inject({
+			method: "POST",
+			url: `/v1/albums/${albumId}/tags/${tagId}`,
+			headers: { cookie: accountantCookie },
+		});
+		expect(res.statusCode).toBe(403);
+	});
+});

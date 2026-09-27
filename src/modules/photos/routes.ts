@@ -9,6 +9,8 @@ import {
 	CreateUploadBody,
 	IdParams,
 	ListPhotosQuery,
+	PhotoCategoryParams,
+	PhotoTagParams,
 	UpdatePhotoBody,
 } from "./schemas.js";
 import {
@@ -20,6 +22,10 @@ import {
 	registerPhoto,
 	unpublishPhoto,
 	updatePhotoRecord,
+	addPhotoCategory,
+	removePhotoCategory,
+	addPhotoTag,
+	removePhotoTag,
 } from "./service.js";
 
 function actorOf(request: { auth?: { user: AuthenticatedUser } }): AuthenticatedUser {
@@ -139,4 +145,58 @@ router.delete(
 		return { status: "deleted" };
 	},
 	{ preHandler: [...photoWrite], schema: { params: IdParams } },
+);
+
+// Category assignment
+router.post(
+	"/:id/categories/:categoryId",
+	async (request) => {
+		const params = request.params as Static<typeof PhotoCategoryParams>;
+		const actor = actorOf(request);
+
+		await addPhotoCategory(actor, params.id, params.categoryId);
+
+		return { status: "added" };
+	},
+	{ preHandler: [...photoWrite], schema: { params: PhotoCategoryParams } },
+);
+
+router.delete(
+	"/:id/categories/:categoryId",
+	async (request) => {
+		const params = request.params as Static<typeof PhotoCategoryParams>;
+		const actor = actorOf(request);
+
+		await removePhotoCategory(actor, params.id, params.categoryId);
+
+		return { status: "removed" };
+	},
+	{ preHandler: [...photoWrite], schema: { params: PhotoCategoryParams } },
+);
+
+// Tag assignment
+router.post(
+	"/:id/tags/:tagId",
+	async (request) => {
+		const params = request.params as Static<typeof PhotoTagParams>;
+		const actor = actorOf(request);
+
+		await addPhotoTag(actor, params.id, params.tagId);
+
+		return { status: "added" };
+	},
+	{ preHandler: [...photoWrite], schema: { params: PhotoTagParams } },
+);
+
+router.delete(
+	"/:id/tags/:tagId",
+	async (request) => {
+		const params = request.params as Static<typeof PhotoTagParams>;
+		const actor = actorOf(request);
+
+		await removePhotoTag(actor, params.id, params.tagId);
+
+		return { status: "removed" };
+	},
+	{ preHandler: [...photoWrite], schema: { params: PhotoTagParams } },
 );

@@ -424,3 +424,154 @@ describe("photo access scope and deletion", () => {
 		expect(detail.statusCode).toBe(404);
 	});
 });
+
+describe("photo category and tag assignment", () => {
+	let photoId = "";
+	let categoryId = "";
+	let tagId = "";
+
+	beforeEach(async () => {
+		const admin = await seedUser(mock, { email: "admin@test.com", role: "ADMIN" });
+		const adminC = sessionCookie(await seedSession(mock, admin.id));
+
+		const photo = await registerPhoto(adminC, "originals/test-cat-tag.jpg", {
+			title: "Test Photo",
+			visibility: "PUBLIC",
+		});
+		photoId = photo.json().id;
+
+		const category = mock.category.create({
+			data: { name: "Landscapes", slug: "landscapes", status: "ACTIVE", position: 1 },
+		}) as { id: string };
+		categoryId = category.id;
+
+		const tag = mock.tag.create({
+			data: { name: "Sunset", slug: "sunset", status: "ACTIVE", visibility: "PUBLIC" },
+		}) as { id: string };
+		tagId = tag.id;
+	});
+
+	it("assigns and removes a category", async () => {
+		const add = await app.inject({
+			method: "POST",
+			url: `/v1/photos/${photoId}/categories/${categoryId}`,
+			headers: { cookie: adminCookie },
+		});
+		expect(add.statusCode).toBe(200);
+		expect(add.json()).toEqual({ status: "added" });
+		expect(auditActions(mock)).toContain("photos.categories.add");
+
+		const duplicate = await app.inject({
+			method: "POST",
+			url: `/v1/photos/${photoId}/categories/${categoryId}`,
+			headers: { cookie: adminCookie },
+		});
+		expect(duplicate.statusCode).toBe(200);
+
+		const remove = await app.inject({
+			method: "DELETE",
+			url: `/v1/photos/${photoId}/categories/${categoryId}`,
+			headers: { cookie: adminCookie },
+		});
+		expect(remove.statusCode).toBe(200);
+		expect(remove.json()).toEqual({ status: "removed" });
+		expect(auditActions(mock)).toContain("photos.categories.remove");
+	});
+
+	it("assigns and removes a tag", async () => {
+		const add = await app.inject({
+			method: "POST",
+			url: `/v1/photos/${photoId}/tags/${tagId}`,
+			headers: { cookie: adminCookie },
+		});
+		expect(add.statusCode).toBe(200);
+		expect(add.json()).toEqual({ status: "added" });
+		expect(auditActions(mock)).toContain("photos.tags.add");
+
+		const duplicate = await app.inject({
+			method: "POST",
+			url: `/v1/photos/${photoId}/tags/${tagId}`,
+			headers: { cookie: adminCookie },
+		});
+		expect(duplicate.statusCode).toBe(200);
+
+		const remove = await app.inject({
+			method: "DELETE",
+			url: `/v1/photos/${photoId}/tags/${tagId}`,
+			headers: { cookie: adminCookie },
+		});
+		expect(remove.statusCode).toBe(200);
+		expect(remove.json()).toEqual({ status: "removed" });
+		expect(auditActions(mock)).toContain("photos.tags.remove");
+	});
+
+	it("returns 404 for unknown category", async () => {
+		const res = await app.inject({
+			method: "POST",
+			url: `/v1/photos/${photoId}/categories/00000000-0000-4000-8000-000000000042`,
+			headers: { cookie: adminCookie },
+		});
+		expect(res.statusCode).toBe(404);
+	});
+
+	it("returns 404 for unknown tag", async () => {
+		const res = await app.inject({
+			method: "POST",
+			url: `/v1/photos/${photoId}/tags/00000000-0000-4000-8000-000000000042`,
+			headers: { cookie: adminCookie },
+		});
+		expect(res.statusCode).toBe(404);
+	});
+
+	it("enforces PHOTOGRAPHER own-photo rule for category assignment", async () => {
+		const res = await app.inject({
+			method: "POST",
+			url: `/v1/photos/${photoId}/categories/${categoryId}`,
+			headers: { cookie: otherPhotographerCookie },
+		});
+		expect(res.statusCode).toBe(403);
+	});
+
+	it("enforces PHOTOGRAPHER own-photo rule for tag assignment", async () => {
+		const res = await app.inject({
+			method: "POST",
+			url: `/v1/photos/${photoId}/tags/${tagId}`,
+			headers: { cookie: otherPhotographerCookie },
+		});
+		expect(res.statusCode).toBe(403);
+	});
+
+	it("allows EDITOR to assign categories/tags to any photo", async () => {
+		const addCat = await app.inject({
+			method: "POST",
+			url: `/v1/photos/${photoId}/categories/${categoryId}`,
+			headers: { cookie: editorCookie },
+		});
+		expect(addCat.statusCode).toBe(200);
+
+		const addTag = await app.inject({
+			method: "POST",
+			url: `/v1/photos/${photoId}/tags/${tagId}`,
+			headers: { cookie: editorCookie },
+		});
+		expect(addTag.statusCode).toBe(200);
+	});
+
+	it("denies ASSISTANT category/tag assignment", async () => {
+		const res = await app.inject({
+			method: "POST",
+			url: `/v1/photos/${photoId}/categories/${categoryId}`,
+			headers: { cookie: assistantCookie },
+		});
+		expect(res.statusCode).toBe(403);
+	});
+
+	it("denies ACCOUNTANT category/tag assignment", async () => {
+		const res = await app.inject({
+			method: "POST",
+			url: `/v1/photos/${photoId}/categories/${categoryId}`,
+			headers: { cookie: accountantCookie },
+		});
+		expect(res.statusCode).toBe(403);
+	});
+});

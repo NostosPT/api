@@ -92,4 +92,11 @@ export const AlbumPhotoParams = Type.Object(
 	StrictObject,
 );
 
+export const AlbumTagParams = Type.Object(
+	{ id: UuidString, tagId: UuidString },
+	StrictObject,
+);
+
 export { IdParams };
+
+export type AlbumTagParams = Static<typeof AlbumTagParams>;

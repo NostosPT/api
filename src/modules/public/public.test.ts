@@ -214,12 +214,7 @@ describe("public photo detail", () => {
 	});
 });
 
-// Photo listing tests are skipped due to a mock compatibility issue with the
-// `id: { in: [...] }` clause in the test environment. The production code is
-// correct; the mock's `in` operator handling for photos causes OOM.
-// See: https://github.com/anomalyco/opencode/issues/XXX (tracking issue)
-// TODO: Fix mock or re-enable when mock supports `in` on photo.id
-describe.skip("public photo listing (blocked by mock OOM bug)", () => {
+describe("public photo listing", () => {
 	it("returns only exposed photos (two-gate + published gallery membership)", async () => {
 		const res = await app.inject({ method: "GET", url: "/v1/public/photos" });
 

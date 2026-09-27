@@ -13,6 +13,12 @@ import {
 	deletePhoto,
 	findPhotoById,
 	findPhotoByOriginalKey,
+	findCategoryById,
+	findTagById,
+	addPhotoCategory as repoAddPhotoCategory,
+	removePhotoCategory as repoRemovePhotoCategory,
+	addPhotoTag as repoAddPhotoTag,
+	removePhotoTag as repoRemovePhotoTag,
 	listPhotos,
 	referenceCounts,
 	updatePhoto,
@@ -416,6 +422,98 @@ export async function unpublishPhoto(actor: AuthenticatedUser, id: string): Prom
 	});
 
 	return toPhotoDTO(updated);
+}
+
+export async function addPhotoCategory(
+	actor: AuthenticatedUser,
+	photoId: string,
+	categoryId: string,
+): Promise<void> {
+	const photo = await getPhotoOrThrow(photoId);
+	assertPhotoAccess(actor, photo);
+
+	const category = await findCategoryById(categoryId);
+
+	if (category === null) {
+		throw new NotFoundError("Category not found");
+	}
+
+	await repoAddPhotoCategory(photoId, categoryId);
+
+	await logAudit({
+		actorId: actor.id,
+		action: "photos.categories.add",
+		resourceType: "photo",
+		resourceId: photoId,
+		result: "SUCCESS",
+		metadata: { categoryId },
+	});
+}
+
+export async function removePhotoCategory(
+	actor: AuthenticatedUser,
+	photoId: string,
+	categoryId: string,
+): Promise<void> {
+	const photo = await getPhotoOrThrow(photoId);
+	assertPhotoAccess(actor, photo);
+
+	await repoRemovePhotoCategory(photoId, categoryId);
+
+	await logAudit({
+		actorId: actor.id,
+		action: "photos.categories.remove",
+		resourceType: "photo",
+		resourceId: photoId,
+		result: "SUCCESS",
+		metadata: { categoryId },
+	});
+}
+
+export async function addPhotoTag(
+	actor: AuthenticatedUser,
+	photoId: string,
+	tagId: string,
+): Promise<void> {
+	const photo = await getPhotoOrThrow(photoId);
+	assertPhotoAccess(actor, photo);
+
+	const tag = await findTagById(tagId);
+
+	if (tag === null) {
+		throw new NotFoundError("Tag not found");
+	}
+
+	await repoAddPhotoTag(photoId, tagId);
+
+	await logAudit({
+		actorId: actor.id,
+		action: "photos.tags.add",
+		resourceType: "photo",
+		resourceId: photoId,
+		result: "SUCCESS",
+		metadata: { tagId },
+	});
+}
+
+export async function removePhotoTag(
+	actor: AuthenticatedUser,
+	photoId: string,
+	tagId: string,
+): Promise<void> {
+	const photo = await getPhotoOrThrow(photoId);
+	assertPhotoAccess(actor, photo);
+
+	await repoRemovePhotoTag(photoId, tagId);
+
+	await logAudit({
+		actorId: actor.id,
+		action: "photos.tags.remove",
+		resourceType: "photo",
+		resourceId: photoId,
+		result: "SUCCESS",
+		metadata: { tagId },
+	});
 }
 
 export async function deletePhotoRecord(actor: AuthenticatedUser, id: string): Promise<void> {

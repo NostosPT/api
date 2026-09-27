@@ -2,6 +2,13 @@ import { Prisma, type Album, type AlbumStatus, type AlbumType } from "@prisma/cl
 import { prisma } from "../../db/prisma.js";
 import { ConflictError } from "../../errors/appError.js";
 
+function isP2002(error: unknown): boolean {
+	return (
+		(error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") ||
+		(typeof error === "object" && error !== null && "code" in error && (error as { code: unknown }).code === "P2002")
+	);
+}
+
 export interface CreateAlbumInput {
 	clientId: string;
 	slug: string;
@@ -182,4 +189,29 @@ export async function updateAlbumPhotoMembership(
 	});
 
 	return result.count > 0;
+}
+
+export async function findTagById(id: string): Promise<{ id: string } | null> {
+	return prisma.tag.findUnique({ where: { id }, select: { id: true } });
+}
+
+export async function addAlbumTag(albumId: string, tagId: string): Promise<void> {
+	try {
+		await prisma.albumTag.create({ data: { albumId, tagId } });
+	}
+	catch (error) {
+		if (isP2002(error)) {
+			// Already assigned - idempotent
+			return;
+		}
+		throw error;
+	}
+}
+
+export async function removeAlbumTag(albumId: string, tagId: string): Promise<void> {
+	await prisma.albumTag.deleteMany({ where: { albumId, tagId } });
+}
+
+export async function listAlbumTags(albumId: string): Promise<{ tagId: string }[]> {
+	return prisma.albumTag.findMany({ where: { albumId }, select: { tagId: true } });
 }

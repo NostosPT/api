@@ -1,4 +1,4 @@
-import type { Prisma, Photo, PhotoStatus, UploadStatus, Visibility, Availability } from "@prisma/client";
+import { Prisma, type Photo, type PhotoStatus, type UploadStatus, type Visibility, type Availability } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { ConflictError } from "../../errors/appError.js";
 
@@ -154,4 +154,61 @@ export async function deletePhoto(id: string): Promise<void> {
 
 		throw error;
 	}
+}
+
+function isP2002(error: unknown): boolean {
+	return (
+		(error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") ||
+		(typeof error === "object" && error !== null && "code" in error && (error as { code: unknown }).code === "P2002")
+	);
+}
+
+export async function findCategoryById(id: string): Promise<{ id: string } | null> {
+	return prisma.category.findUnique({ where: { id }, select: { id: true } });
+}
+
+export async function findTagById(id: string): Promise<{ id: string } | null> {
+	return prisma.tag.findUnique({ where: { id }, select: { id: true } });
+}
+
+export async function addPhotoCategory(photoId: string, categoryId: string): Promise<void> {
+	try {
+		await prisma.photoCategory.create({ data: { photoId, categoryId } });
+	}
+	catch (error) {
+		if (isP2002(error)) {
+			// Already assigned - idempotent
+			return;
+		}
+		throw error;
+	}
+}
+
+export async function removePhotoCategory(photoId: string, categoryId: string): Promise<void> {
+	await prisma.photoCategory.deleteMany({ where: { photoId, categoryId } });
+}
+
+export async function addPhotoTag(photoId: string, tagId: string): Promise<void> {
+	try {
+		await prisma.photoTag.create({ data: { photoId, tagId } });
+	}
+	catch (error) {
+		if (isP2002(error)) {
+			// Already assigned - idempotent
+			return;
+		}
+		throw error;
+	}
+}
+
+export async function removePhotoTag(photoId: string, tagId: string): Promise<void> {
+	await prisma.photoTag.deleteMany({ where: { photoId, tagId } });
+}
+
+export async function listPhotoCategories(photoId: string): Promise<{ categoryId: string }[]> {
+	return prisma.photoCategory.findMany({ where: { photoId }, select: { categoryId: true } });
+}
+
+export async function listPhotoTags(photoId: string): Promise<{ tagId: string }[]> {
+	return prisma.photoTag.findMany({ where: { photoId }, select: { tagId: true } });
 }

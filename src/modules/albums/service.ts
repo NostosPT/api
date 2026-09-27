@@ -11,6 +11,9 @@ import {
 	findAlbumById,
 	findAlbumBySlug,
 	findPhotosByIds,
+	findTagById,
+	addAlbumTag as repoAddAlbumTag,
+	removeAlbumTag as repoRemoveAlbumTag,
 	getAlbumPhotoIds,
 	listAlbums,
 	replaceAlbumPhotos,
@@ -375,6 +378,52 @@ export async function updateAlbumPhotoRecord(
 	});
 
 	return toAlbumDetail(id);
+}
+
+export async function addAlbumTag(
+	actorId: string,
+	albumId: string,
+	tagId: string,
+): Promise<void> {
+	const tag = await findTagById(tagId);
+
+	if (tag === null) {
+		throw new NotFoundError("Tag not found");
+	}
+
+	await repoAddAlbumTag(albumId, tagId);
+
+	await logAudit({
+		actorId,
+		action: "albums.tags.add",
+		resourceType: "album",
+		resourceId: albumId,
+		result: "SUCCESS",
+		metadata: { tagId },
+	});
+}
+
+export async function removeAlbumTag(
+	actorId: string,
+	albumId: string,
+	tagId: string,
+): Promise<void> {
+	const tag = await findTagById(tagId);
+
+	if (tag === null) {
+		throw new NotFoundError("Tag not found");
+	}
+
+	await repoRemoveAlbumTag(albumId, tagId);
+
+	await logAudit({
+		actorId,
+		action: "albums.tags.remove",
+		resourceType: "album",
+		resourceId: albumId,
+		result: "SUCCESS",
+		metadata: { tagId },
+	});
 }
 
 async function findClientOrThrow(clientId: string) {

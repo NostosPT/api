@@ -14,6 +14,8 @@ import {
 
 const StrictObject = { additionalProperties: false } as const;
 
+const UuidString = Type.String({ pattern: UUID_PATTERN });
+
 export const CreateUploadBody = Type.Object(
 	{
 		contentType: Type.String({ minLength: 1, maxLength: 100 }),
@@ -37,7 +39,7 @@ export const CreatePhotoBody = Type.Object(
 		availability: Type.Optional(AvailabilityEnum),
 		priceCents: Type.Optional(Type.Integer({ minimum: 0 })),
 		currency: Type.Optional(Type.String({ pattern: "^[A-Z]{3}$" })),
-		photographerId: Type.Optional(Type.Union([Type.String({ pattern: UUID_PATTERN }), Type.Null()])),
+		photographerId: Type.Optional(Type.Union([UuidString, Type.Null()])),
 		sha256: Type.Optional(Type.String({ pattern: "^[A-Fa-f0-9]{64}$" })),
 		// Compatibility fields sent by the admin upload form. They are accepted so
 		// the live transport does not fail strict validation, but not stored:
@@ -62,7 +64,7 @@ export const UpdatePhotoBody = Type.Object(
 		availability: Type.Optional(AvailabilityEnum),
 		priceCents: OptionalOrNull(Type.Integer({ minimum: 0 })),
 		currency: Type.Optional(Type.String({ pattern: "^[A-Z]{3}$" })),
-		photographerId: OptionalOrNull(Type.String({ pattern: UUID_PATTERN })),
+		photographerId: OptionalOrNull(UuidString),
 	},
 	StrictObject,
 );
@@ -76,7 +78,7 @@ export const ListPhotosQuery = Type.Object(
 		visibility: Type.Optional(VisibilityEnum),
 		availability: Type.Optional(AvailabilityEnum),
 		uploadStatus: Type.Optional(UploadStatusEnum),
-		photographerId: Type.Optional(Type.String({ pattern: UUID_PATTERN })),
+		photographerId: Type.Optional(UuidString),
 		q: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
 	},
 	StrictObject,
@@ -84,4 +86,18 @@ export const ListPhotosQuery = Type.Object(
 
 export type ListPhotosQuery = Static<typeof ListPhotosQuery>;
 
+// Category/Tag assignment params
+export const PhotoCategoryParams = Type.Object(
+	{ id: UuidString, categoryId: UuidString },
+	StrictObject,
+);
+
+export const PhotoTagParams = Type.Object(
+	{ id: UuidString, tagId: UuidString },
+	StrictObject,
+);
+
 export { IdParams };
+
+export type PhotoCategoryParams = Static<typeof PhotoCategoryParams>;
+export type PhotoTagParams = Static<typeof PhotoTagParams>;

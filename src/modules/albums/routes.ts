@@ -7,6 +7,7 @@ import { ListFavoritesQuery } from "../favorites/schemas.js";
 import { createRouter } from "../../routing/router.js";
 import {
 	AlbumPhotoParams,
+	AlbumTagParams,
 	CreateAlbumBody,
 	IdParams,
 	ListAlbumsQuery,
@@ -28,6 +29,8 @@ import {
 	unpublishAlbum,
 	updateAlbumPhotoRecord,
 	updateAlbumRecord,
+	addAlbumTag,
+	removeAlbumTag,
 } from "./service.js";
 
 function actorIdOf(request: { auth?: { user: { id: string } } }): string {
@@ -208,4 +211,31 @@ router.delete(
 		return { status: "archived" };
 	},
 	{ preHandler: [...albumWrite], schema: { params: IdParams } },
+);
+
+// Tag assignment
+router.post(
+	"/:id/tags/:tagId",
+	async (request) => {
+		const params = request.params as Static<typeof AlbumTagParams>;
+		const actorId = actorIdOf(request);
+
+		await addAlbumTag(actorId, params.id, params.tagId);
+
+		return { status: "added" };
+	},
+	{ preHandler: [...albumWrite], schema: { params: AlbumTagParams } },
+);
+
+router.delete(
+	"/:id/tags/:tagId",
+	async (request) => {
+		const params = request.params as Static<typeof AlbumTagParams>;
+		const actorId = actorIdOf(request);
+
+		await removeAlbumTag(actorId, params.id, params.tagId);
+
+		return { status: "removed" };
+	},
+	{ preHandler: [...albumWrite], schema: { params: AlbumTagParams } },
 );
