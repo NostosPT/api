@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import type { Static, TLiteral, TSchema } from "typebox";
-import type { Role, UserStatus, ServiceRequestStage, LeadSource, ClientStatus, TagStatus, TagVisibility } from "@prisma/client";
+import type { Role, UserStatus, ServiceRequestStage, LeadSource, ClientStatus, TagStatus, TagVisibility, PhotoStatus, Visibility, Availability, UploadStatus } from "@prisma/client";
 
 export const UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
@@ -86,7 +86,44 @@ export const CategoryStatusEnum = Type.Union([...activeInactiveLiterals]);
 
 export const TagVisibilityEnum = Type.Union([...tagVisibilityLiterals]);
 
+const photoStatusLiterals = [
+	Type.Literal("DRAFT"),
+	Type.Literal("APPROVED"),
+	Type.Literal("PUBLISHED"),
+] as const satisfies readonly TLiteral<PhotoStatus>[];
+
+const visibilityLiterals = [
+	Type.Literal("PUBLIC"),
+	Type.Literal("UNLISTED"),
+	Type.Literal("PRIVATE"),
+] as const satisfies readonly TLiteral<Visibility>[];
+
+const availabilityLiterals = [
+	Type.Literal("NOT_FOR_SALE"),
+	Type.Literal("AVAILABLE"),
+	Type.Literal("SOLD_OUT"),
+] as const satisfies readonly TLiteral<Availability>[];
+
+const uploadStatusLiterals = [
+	Type.Literal("PENDING"),
+	Type.Literal("READY"),
+	Type.Literal("FAILED"),
+] as const satisfies readonly TLiteral<UploadStatus>[];
+
+export const PhotoStatusEnum = Type.Union([...photoStatusLiterals]);
+
+export const VisibilityEnum = Type.Union([...visibilityLiterals]);
+
+export const AvailabilityEnum = Type.Union([...availabilityLiterals]);
+
+export const UploadStatusEnum = Type.Union([...uploadStatusLiterals]);
+
 export const SlugString = Type.String({ pattern: "^[a-z0-9-]+$", minLength: 1, maxLength: 64 });
+
+// Pattern (not `format: "date-time"`) so validation works without ajv-formats.
+export const IsoDateTimeString = Type.String({
+	pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?(Z|[+-]\\d{2}:\\d{2})$",
+});
 
 // Optional field that also accepts explicit null so PATCH bodies can clear
 // stored nullable values.

@@ -180,6 +180,10 @@ export function resetMock(mock: MockPrisma): void {
 	mock.clientActivity.rows.length = 0;
 	mock.tag.rows.length = 0;
 	mock.category.rows.length = 0;
+	mock.photo.rows.length = 0;
+	mock.albumPhoto.rows.length = 0;
+	mock.galleryPhoto.rows.length = 0;
+	mock.purchasePhoto.rows.length = 0;
 }
 
 class MockModel {
@@ -191,15 +195,20 @@ class MockModel {
 	// Nullable fields that should default to null when absent so null-checks
 	// in DTO code distinguish "column is null" from "column was not provided".
 	nullableFields: string[];
+	// Integer columns with @default(autoincrement()); the mock fills the next
+	// value from existing rows exactly like the sequence would.
+	autoIncrementFields: string[];
 
 	constructor(
 		uniqueFields: string[][] = [],
 		defaultTimestamps: string[] = ["createdAt", "updatedAt"],
 		nullableFields: string[] = [],
+		autoIncrementFields: string[] = [],
 	) {
 		this.uniqueFields = uniqueFields;
 		this.defaultTimestamps = defaultTimestamps;
 		this.nullableFields = nullableFields;
+		this.autoIncrementFields = autoIncrementFields;
 	}
 
 	private checkUnique(row: RecordRow, exclude?: RecordRow): void {
@@ -291,6 +300,18 @@ class MockModel {
 			}
 		}
 
+		for (const field of this.autoIncrementFields) {
+			if (row[field] === undefined) {
+				const max = this.rows.reduce(
+					(highest, existing) => typeof existing[field] === "number" && existing[field] > highest
+						? existing[field] as number
+						: highest,
+					0,
+				);
+				row[field] = max + 1;
+			}
+		}
+
 		this.checkUnique(row);
 		this.rows.push(row);
 
@@ -376,6 +397,10 @@ export interface MockPrisma {
 	clientActivity: MockModel;
 	tag: MockModel;
 	category: MockModel;
+	photo: MockModel;
+	albumPhoto: MockModel;
+	galleryPhoto: MockModel;
+	purchasePhoto: MockModel;
 	$transaction: <T>(fn: (tx: MockPrisma) => Promise<T>) => Promise<T>;
 }
 
@@ -417,6 +442,26 @@ export function createMockPrisma(): MockPrisma {
 		clientActivity: new MockModel([], ["createdAt"], ["body", "href", "authorId"]),
 		tag: new MockModel([["slug"], ["name"]], ["createdAt", "updatedAt"], ["description"]),
 		category: new MockModel([["slug"], ["name"], ["position"]], ["createdAt", "updatedAt"], ["description"]),
+		photo: new MockModel(
+			[["number"], ["originalKey"]],
+			["createdAt", "updatedAt"],
+			[
+				"title",
+				"description",
+				"displayKey",
+				"thumbnailKey",
+				"width",
+				"height",
+				"takenAt",
+				"location",
+				"photographerId",
+				"priceCents",
+			],
+			["number"],
+		),
+		albumPhoto: new MockModel([["albumId", "position"], ["albumId", "photoId"]], ["addedAt"]),
+		galleryPhoto: new MockModel([["galleryId", "position"], ["galleryId", "photoId"]], ["addedAt"]),
+		purchasePhoto: new MockModel([["purchaseId", "photoId"]], ["addedAt"]),
 		// All models share one row store, so the callback receives the same mock.
 		$transaction: async function $transaction<T>(fn: (tx: MockPrisma) => Promise<T>): Promise<T> {
 			return fn(mock);
