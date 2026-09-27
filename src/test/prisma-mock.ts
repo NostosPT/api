@@ -183,6 +183,7 @@ export function resetMock(mock: MockPrisma): void {
 	mock.photo.rows.length = 0;
 	mock.album.rows.length = 0;
 	mock.albumPhoto.rows.length = 0;
+	mock.favorite.rows.length = 0;
 	mock.galleryPhoto.rows.length = 0;
 	mock.purchasePhoto.rows.length = 0;
 }
@@ -401,6 +402,7 @@ export interface MockPrisma {
 	photo: MockModel;
 	album: MockModel;
 	albumPhoto: MockModel;
+	favorite: MockModel;
 	galleryPhoto: MockModel;
 	purchasePhoto: MockModel;
 	$transaction: <T>(fn: (tx: MockPrisma) => Promise<T>) => Promise<T>;
@@ -477,6 +479,7 @@ export function createMockPrisma(): MockPrisma {
 			],
 		),
 		albumPhoto: new MockModel([["albumId", "position"], ["albumId", "photoId"]], ["addedAt"]),
+		favorite: new MockModel([["clientId", "albumId", "photoId"]], ["createdAt"]),
 		galleryPhoto: new MockModel([["galleryId", "position"], ["galleryId", "photoId"]], ["addedAt"]),
 		purchasePhoto: new MockModel([["purchaseId", "photoId"]], ["addedAt"]),
 		// All models share one row store, so the callback receives the same mock.

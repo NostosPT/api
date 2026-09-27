@@ -2,6 +2,8 @@ import type { Static } from "typebox";
 import { requireAuth, requireRole } from "../../auth/context.js";
 import { AuthenticationError } from "../../errors/appError.js";
 import { created } from "../../http/respond.js";
+import { listAlbumFavorites } from "../favorites/service.js";
+import { ListFavoritesQuery } from "../favorites/schemas.js";
 import { createRouter } from "../../routing/router.js";
 import {
 	AlbumPhotoParams,
@@ -150,6 +152,19 @@ router.delete(
 		return clearAccessCode(actorId, params.id);
 	},
 	{ preHandler: [...albumWrite], schema: { params: IdParams } },
+);
+
+router.get(
+	"/:id/favorites",
+	async (request) => {
+		const params = request.params as { id: string };
+		const query = request.query as Static<typeof ListFavoritesQuery>;
+		const page = query.page ?? 1;
+		const pageSize = query.pageSize ?? 20;
+
+		return listAlbumFavorites(params.id, page, pageSize, { clientId: query.clientId });
+	},
+	{ preHandler: [...albumRead], schema: { params: IdParams, querystring: ListFavoritesQuery } },
 );
 
 router.put(
