@@ -176,6 +176,7 @@ CUD+P on its Phase 1 domains, `view` ⇒ R, `none` ⇒ —.
 | Services catalogue | M | R | R | R | — |
 | Service Requests | M | R | R | CUD+R | R |
 | Tags | M | CUD+R | CUD+R | R | R (via clients) |
+| Categories | M | CUD+R | CUD+R | R | R |
 | Photos | M | CUD+P | CUD+P | R | — |
 | Public gallery curation (publish/feature) | M | P | P | R | — |
 | Albums (share/rotate) | M | CUD+P | R | CUD+P | — |
