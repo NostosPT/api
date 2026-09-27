@@ -58,9 +58,9 @@ Favorites, minimal Purchase, AuditLog.
 
 ## Deferred functionality (explicitly not Phase 1)
 
-* Public portfolio endpoints (`GET /v1/public/albums/:slug`, service catalogue
-  listing) — needed by the site, designed in Phase 1, implemented Phase 2
-  unless the site launch requires them earlier.
+* Public portfolio endpoints (`GET /v1/public/albums/:slug`) — needed by the
+  site, designed in Phase 1, implemented Phase 2 unless the site launch
+  requires them earlier.
 * Mail threads/labels/search, notifications (server-sent events), client
   success follow-ups/automations/feedback, team settings UI backing,
   weekly digest scheduler.
@@ -94,15 +94,14 @@ Favorites, minimal Purchase, AuditLog.
 ## Unresolved decisions (`DECISION REQUIRED`)
 
 [B] 1. Public portfolio endpoints in Phase 1 or 2 (site launch dependency)?
-[B] 2. `GET /v1/services/all` public without auth (site catalogue)?
-[C] 3. SeaweedFS topology (single vs replicated) and backup story.
-[C] 4. Invoice provider choice (invoicexpress/moloni/vendus/toconline).
-[C] 5. Resend inbound domain + webhook secret rotation story.
-[B] 6. PHOTOGRAPHER photo scope: own photos only (`photographerId` = self) or
+[C] 2. SeaweedFS topology (single vs replicated) and backup story.
+[C] 3. Invoice provider choice (invoicexpress/moloni/vendus/toconline).
+[C] 4. Resend inbound domain + webhook secret rotation story.
+[B] 5. PHOTOGRAPHER photo scope: own photos only (`photographerId` = self) or
    archive-wide edit (frontend says "own work" but grants archive edit)?
-[C] 7. 2FA scope: optional per-user vs mandatory ADMIN?
-[C] 8. Claim vector backend: pgvector vs external embeddings service?
-[C] 9. Analytics deferral approval (Phase 2 with documented minimal schema)?
+[C] 6. 2FA scope: optional per-user vs mandatory ADMIN?
+[C] 7. Claim vector backend: pgvector vs external embeddings service?
+[C] 8. Analytics deferral approval (Phase 2 with documented minimal schema)?
 
 A = schema blocker, B = Phase 1 implementation, C = Phase 2. Zero A items —
 nothing blocks Prisma schema creation.
@@ -111,7 +110,7 @@ Full format (options, recommended defaults, blockers) in `DECISIONS.md`.
 Resolved into Proposed/Confirmed: tag model, cookie strategy, session
 lifetimes, gallery/album semantics, album-code mandate (B for paid, A for
 FREE), lockout default (5 fails → 15 min backoff), entitlement semantics,
-client deletion.
+client deletion, public service catalogue (option A).
 
 ## Future architecture considerations
 

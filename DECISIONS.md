@@ -152,6 +152,11 @@ decision, the concrete reason, and what was rejected. Open items are marked
   PostgreSQL (+ storage reachability) and returns 200/503 without internals.
 * **Tests: Vitest + Fastify `inject()`.** No Supertest without a concrete
   requirement.
+* **Public service catalogue is public (option A, confirmed).** `GET /v1/services`
+  (list) and `GET /v1/services/:slug` serve without authentication: prices are
+  marketing, and the public intake flow (`POST /v1/service-requests`) resolves
+  requests by service slug, so the site needs catalogue discovery. Rejected:
+  authenticated-only catalogue (would block site integration until Phase 2).
 
 ## Permission matrix (Phase 1)
 
@@ -211,21 +216,19 @@ PHOTOGRAPHER scope is app-logic over the existing `photographerId`).
    nothing in Phase 1 either way.
 [B] 5. **Public portfolio endpoints timing.** Why: site launch may need them
    early. A: Phase 1. B: Phase 2 (recommended). Blocking: site launch plan.
-[B] 6. **Public service catalogue.** Why: `GET /v1/services/all` without auth
-   exposes pricing. A: public (recommended, prices are marketing).
-   B: authenticated. Blocking: site catalogue integration.
-[C] 7. **SeaweedFS topology/backups.** Why: durability/ops is owner infra.
+[C] 6. **SeaweedFS topology/backups.** Why: durability/ops is owner infra.
    A: single node + snapshots. B: replicated + off-site backups
    (recommended). Blocking: deploy design.
-[C] 8. **Invoice provider.** Why: provider choice shapes Documents integration.
+[C] 7. **Invoice provider.** Why: provider choice shapes Documents integration.
    A/B: invoicexpress / moloni / vendus / toconline — no default offered;
    owner decides. Blocking: Phase 2 finance only.
-[C] 9. **Resend inbound story.** Why: domain + secret rotation affect mail
+[C] 8. **Resend inbound story.** Why: domain + secret rotation affect mail
    design. A/B: owner provides domain and rotation policy. Blocking:
    Phase 2 mail only.
 
 Resolved out of this list (now Proposed or Confirmed): tag model, cookie
 strategy, session lifetimes, gallery/album semantics, album-code mandate
 (B for paid, A for FREE), lockout (default: 5 fails → 15 min backoff,
-env-configurable), pack/album entitlement semantics, client deletion.
+env-configurable), pack/album entitlement semantics, client deletion,
+public service catalogue (option A: public list + slug detail).
 
