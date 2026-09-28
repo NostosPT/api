@@ -36,8 +36,9 @@ function getClient(): S3Client | null {
 				accessKeyId: storage.accessKeyId as string,
 				secretAccessKey: storage.secretAccessKey as string,
 			},
-			// SeaweedFS and other self-hosted S3 implementations use path-style keys.
-			forcePathStyle: true,
+			// Path-style bucket addressing for SeaweedFS and other
+			// self-hosted S3 implementations (S3_FORCE_PATH_STYLE).
+			forcePathStyle: storage.forcePathStyle,
 		});
 	}
 

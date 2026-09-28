@@ -63,4 +63,27 @@ describe("validateEnv", () => {
 
 		expect(() => validateEnv()).toThrow("Invalid LOG_LEVEL configuration");
 	});
+
+	it("defaults storage to the s3 provider without path-style addressing", () => {
+		validBase();
+
+		const env = validateEnv();
+
+		expect(env.STORAGE_PROVIDER).toBe("s3");
+		expect(env.S3_FORCE_PATH_STYLE).toBe(false);
+	});
+
+	it("accepts path-style addressing for self-hosted S3 implementations", () => {
+		validBase();
+		process.env.S3_FORCE_PATH_STYLE = "true";
+
+		expect(validateEnv().S3_FORCE_PATH_STYLE).toBe(true);
+	});
+
+	it("rejects an unsupported storage provider", () => {
+		validBase();
+		process.env.STORAGE_PROVIDER = "gcs";
+
+		expect(() => validateEnv()).toThrow('Invalid STORAGE_PROVIDER configuration');
+	});
 });

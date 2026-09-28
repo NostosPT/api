@@ -146,6 +146,9 @@ describe("public gallery endpoints", () => {
 		// draft photo excluded (status), private photo excluded (visibility), non-member excluded
 		expect(body.photos.find((p: { number: number }) => p.number === 102)).toBeUndefined();
 		expect(body.photos.find((p: { number: number }) => p.number === 103)).toBeUndefined();
+
+		// no display rendition and no storage in tests: imageUrl stays null (never invented)
+		expect(featured.imageUrl).toBeNull();
 	});
 
 	it("returns 404 for draft gallery slug", async () => {
@@ -172,6 +175,7 @@ describe("public photo detail", () => {
 		expect(body.copyright).toBe("© Nostos Studio");
 		expect(body.categories).toEqual([{ slug: "landscapes", name: "Landscapes" }]);
 		expect(body.tags).toEqual([{ slug: "sunset", name: "Sunset" }]);
+		expect(body.imageUrl).toBeNull();
 	});
 
 	it("returns 404 for draft photo", async () => {

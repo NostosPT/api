@@ -72,6 +72,16 @@ function optional(value: string | undefined): string | undefined {
 	return trimmed ? trimmed : undefined;
 }
 
+function parseStorageProvider(value: string | undefined): "s3" {
+	const provider = (value ?? "s3").trim().toLowerCase();
+
+	if (provider === "" || provider === "s3") {
+		return "s3";
+	}
+
+	throw new Error('Invalid STORAGE_PROVIDER configuration (only "s3" is supported)');
+}
+
 function requiredSecret(name: string, minLength: number): string {
 	const value = process.env[name];
 
@@ -115,6 +125,8 @@ export function validateEnv(): EnvConfig {
 		S3_ACCESS_KEY_ID: optional(process.env.S3_ACCESS_KEY_ID),
 		S3_SECRET_ACCESS_KEY: optional(process.env.S3_SECRET_ACCESS_KEY),
 		S3_PUBLIC_ENDPOINT: optional(process.env.S3_PUBLIC_ENDPOINT),
+		S3_FORCE_PATH_STYLE: parseBoolean(process.env.S3_FORCE_PATH_STYLE, false),
+		STORAGE_PROVIDER: parseStorageProvider(process.env.STORAGE_PROVIDER),
 		SITE_COPYRIGHT: optional(process.env.SITE_COPYRIGHT),
 	};
 }

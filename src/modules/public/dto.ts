@@ -1,4 +1,5 @@
 import type { Category, Photo, Tag } from "@prisma/client";
+import { storage } from "../../storage/index.js";
 
 export interface PublicGalleryDTO {
 	id: string;
@@ -17,6 +18,10 @@ export interface PublicPhotoSummary {
 	priceCents: number | null;
 	currency: string;
 	takenAt: string | null;
+	// Publishable rendition URL (ephemeral presigned read of the display
+	// rendition). Null until a display object exists or when storage is not
+	// configured — originals are never exposed here.
+	imageUrl: string | null;
 }
 
 export interface PublicGalleryPhotoSummary extends PublicPhotoSummary {
@@ -44,9 +49,14 @@ export interface PublicPhotoDetailDTO extends PublicPhotoSummary {
 	createdAt: string;
 }
 
-// Renditions (displayKey/thumbnailKey) are Phase 2: public DTOs deliberately
-// carry no image URLs — originals are private and URLs are ephemeral.
-export function toPublicPhotoSummary(photo: Photo, isFeatured?: boolean): PublicPhotoSummary {
+// Thumbnails stay staff-only for now; the public summary carries at most one
+// publishable rendition URL (null until a display object exists or when
+// storage is not configured). Originals are never exposed here.
+export async function toPublicPhotoSummary(photo: Photo, isFeatured: boolean): Promise<PublicGalleryPhotoSummary>;
+export async function toPublicPhotoSummary(photo: Photo, isFeatured?: boolean): Promise<PublicPhotoSummary>;
+export async function toPublicPhotoSummary(photo: Photo, isFeatured?: boolean): Promise<PublicPhotoSummary> {
+	const imageUrl = photo.displayKey === null ? null : await storage.presignGet(photo.displayKey);
+
 	const summary: PublicPhotoSummary = {
 		number: photo.number,
 		title: photo.title,
@@ -56,6 +66,7 @@ export function toPublicPhotoSummary(photo: Photo, isFeatured?: boolean): Public
 		priceCents: photo.priceCents,
 		currency: photo.currency,
 		takenAt: photo.takenAt?.toISOString() ?? null,
+		imageUrl,
 	};
 
 	if (isFeatured !== undefined) {
