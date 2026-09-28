@@ -26,12 +26,14 @@ export function loadConfig(): AppConfig {
 			maxConcurrent: env.SESSION_MAX_CONCURRENT,
 		},
 		storage: {
+			provider: env.STORAGE_PROVIDER,
 			endpoint: env.S3_ENDPOINT,
 			region: env.S3_REGION,
 			bucket: env.S3_BUCKET,
 			accessKeyId: env.S3_ACCESS_KEY_ID,
 			secretAccessKey: env.S3_SECRET_ACCESS_KEY,
 			publicEndpoint: env.S3_PUBLIC_ENDPOINT,
+			forcePathStyle: env.S3_FORCE_PATH_STYLE,
 		},
 	};
 

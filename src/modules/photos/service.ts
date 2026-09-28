@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { basename, extname } from "node:path";
 import type { Photo } from "@prisma/client";
 import { logAudit } from "../../audit/log.js";
@@ -6,6 +5,7 @@ import type { AuthenticatedUser } from "../../auth/session.js";
 import { config } from "../../config/index.js";
 import { AuthorizationError, ConflictError, NotFoundError, ServiceUnavailableError, ValidationError } from "../../errors/appError.js";
 import { storage } from "../../storage/index.js";
+import { originalKey } from "../../storage/keys.js";
 import { toPhotoDTO, type PhotoDTO, type PhotoList, type UploadIntent } from "./dto.js";
 import {
 	countPhotos,
@@ -247,7 +247,7 @@ export async function createUploadIntent(actor: AuthenticatedUser, input: Create
 		}
 	}
 
-	const key = `originals/${randomUUID()}${filename === null ? "" : `-${filename}`}`;
+	const key = originalKey(filename);
 	const uploadUrl = await storage.presignPut(key, { contentType: input.contentType });
 
 	if (uploadUrl === null) {

@@ -23,13 +23,19 @@ export interface SessionConfig {
 	maxConcurrent: number;
 }
 
+export type StorageProvider = "s3";
+
 export interface StorageConfig {
+	provider: StorageProvider;
 	endpoint: string | undefined;
 	region: string | undefined;
 	bucket: string | undefined;
 	accessKeyId: string | undefined;
 	secretAccessKey: string | undefined;
 	publicEndpoint: string | undefined;
+	// Path-style bucket addressing (required by SeaweedFS and most
+	// self-hosted S3 implementations; AWS also accepts it).
+	forcePathStyle: boolean;
 }
 
 export interface EnvConfig {
@@ -52,6 +58,8 @@ export interface EnvConfig {
 	S3_ACCESS_KEY_ID: string | undefined;
 	S3_SECRET_ACCESS_KEY: string | undefined;
 	S3_PUBLIC_ENDPOINT: string | undefined;
+	S3_FORCE_PATH_STYLE: boolean;
+	STORAGE_PROVIDER: StorageProvider;
 	SITE_COPYRIGHT: string | undefined;
 }
 

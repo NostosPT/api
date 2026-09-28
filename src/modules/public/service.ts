@@ -18,6 +18,7 @@ import {
 } from "./repository.js";
 import {
 	toPublicGalleryDTO,
+	toPublicPhotoSummary,
 	type PublicGalleryDetailDTO,
 	type PublicPhotoDetailDTO,
 	type PublicPhotoPage,
@@ -81,27 +82,19 @@ export async function getPublicGallery(slug: string): Promise<PublicGalleryDetai
 	const photos = await findPhotosByIdsPublic(photoIds);
 	const photoMap = new Map(photos.map((p) => [p.id, p]));
 
-	const publicPhotos = entries
-		.map((entry) => {
-			const photo = photoMap.get(entry.photoId);
+	const publicPhotos = (
+		await Promise.all(
+			entries.map(async (entry) => {
+				const photo = photoMap.get(entry.photoId);
 
-			if (!photo) {
-				return null;
-			}
+				if (!photo) {
+					return null;
+				}
 
-			return {
-				number: photo.number,
-				title: photo.title,
-				width: photo.width,
-				height: photo.height,
-				isFeatured: entry.isFeatured,
-				availability: photo.availability,
-				priceCents: photo.priceCents,
-				currency: photo.currency,
-				takenAt: photo.takenAt?.toISOString() ?? null,
-			};
-		})
-		.filter((p): p is NonNullable<typeof p> => p !== null);
+				return toPublicPhotoSummary(photo, entry.isFeatured);
+			}),
+		)
+	).filter((p): p is NonNullable<typeof p> => p !== null);
 
 	return { ...toPublicGalleryDTO(gallery), photos: publicPhotos };
 }
@@ -195,16 +188,7 @@ export async function listPublicPhotos(query: ListPublicPhotosQuery): Promise<Pu
 	]);
 
 	return {
-		items: photos.map((p) => ({
-			number: p.number,
-			title: p.title,
-			width: p.width,
-			height: p.height,
-			availability: p.availability,
-			priceCents: p.priceCents,
-			currency: p.currency,
-			takenAt: p.takenAt?.toISOString() ?? null,
-		})),
+		items: await Promise.all(photos.map((p) => toPublicPhotoSummary(p))),
 		page,
 		pageSize,
 		total,
@@ -227,16 +211,9 @@ export async function getPublicPhoto(number: number): Promise<PublicPhotoDetailD
 	const copyright = config.env.SITE_COPYRIGHT ?? null;
 
 	return {
-		number: photo.number,
-		title: photo.title,
+		...(await toPublicPhotoSummary(photo)),
 		description: photo.description,
-		width: photo.width,
-		height: photo.height,
-		takenAt: photo.takenAt?.toISOString() ?? null,
 		location: photo.location,
-		availability: photo.availability,
-		priceCents: photo.priceCents,
-		currency: photo.currency,
 		credit,
 		copyright,
 		categories: categories.map((c) => ({ slug: c.slug, name: c.name })),
