@@ -10,6 +10,10 @@ import {
 	type AuthenticatedUser,
 } from "./session.js";
 
+// In development, the Website BFF uses a cookie name without the __Host- prefix
+// (since Secure is not available on HTTP localhost). Accept both names.
+const DEV_SESSION_COOKIE_NAME = "nostos.sid";
+
 declare module "fastify" {
 	interface FastifyRequest {
 		auth?: {
@@ -22,7 +26,7 @@ declare module "fastify" {
 // Resolves the session cookie once per request. Protected routes read
 // `request.auth` instead of querying the user again.
 export async function requireAuth(request: FastifyRequest): Promise<void> {
-	const token = request.cookies?.[SESSION_COOKIE_NAME];
+	const token = request.cookies?.[SESSION_COOKIE_NAME] ?? request.cookies?.[DEV_SESSION_COOKIE_NAME];
 
 	if (!token) {
 		throw new AuthenticationError("Authentication required");
