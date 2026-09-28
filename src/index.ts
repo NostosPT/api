@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { Bootstrapper } from "./core/bootstrapper.js";
 import * as logger from "./logging/logger.js";
 

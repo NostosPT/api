@@ -13,6 +13,7 @@ import { prisma } from "../db/prisma.js";
 // No login/register endpoints here — those arrive with business routes.
 
 export const SESSION_COOKIE_NAME = "__Host-nostos.sid";
+export const DEV_SESSION_COOKIE_NAME = "nostos.sid";
 export const SESSION_TOKEN_BYTES = 32;
 
 // 256-bit cryptographically random token, hex-encoded (64 chars).

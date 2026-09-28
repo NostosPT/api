@@ -1,9 +1,16 @@
 import type { FastifyReply } from "fastify";
+import { config } from "../config/index.js";
 import { SESSION_COOKIE_NAME, sessionCookieAttributes } from "./session.js";
 
 export interface CookieSettings {
 	secure: boolean;
 	maxAgeSeconds: number;
+}
+
+// In development, __Host- prefix requires Secure which we don't have on HTTP localhost.
+// Use a dev cookie name without the __Host- prefix.
+function getCookieName(): string {
+	return config.env.NODE_ENV === "production" ? SESSION_COOKIE_NAME : "nostos.sid";
 }
 
 // Serializes the session cookie. Clearing uses the same attributes with an
@@ -14,8 +21,9 @@ export function setSessionCookie(
 	settings: CookieSettings,
 ): void {
 	const attributes = sessionCookieAttributes(settings.secure, settings.maxAgeSeconds);
+	const cookieName = getCookieName();
 
-	reply.setCookie(SESSION_COOKIE_NAME, token, {
+	reply.setCookie(cookieName, token, {
 		httpOnly: attributes.httpOnly,
 		secure: attributes.secure,
 		sameSite: attributes.sameSite,
@@ -25,7 +33,9 @@ export function setSessionCookie(
 }
 
 export function clearSessionCookie(reply: FastifyReply, settings: CookieSettings): void {
-	reply.clearCookie(SESSION_COOKIE_NAME, {
+	const cookieName = getCookieName();
+
+	reply.clearCookie(cookieName, {
 		httpOnly: true,
 		secure: settings.secure,
 		sameSite: "lax",

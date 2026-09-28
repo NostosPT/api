@@ -43,7 +43,8 @@ describe("auth", () => {
 		expect(JSON.stringify(body)).not.toContain("tokenHash");
 
 		const setCookie = String(response.headers["set-cookie"] ?? "");
-		expect(setCookie).toContain("__Host-nostos.sid=");
+		const cookieName = process.env.NODE_ENV === "production" ? "__Host-nostos.sid" : "nostos.sid";
+		expect(setCookie).toContain(`${cookieName}=`);
 		expect(setCookie).toContain("HttpOnly");
 		expect(setCookie).toContain("Path=/");
 		expect(setCookie).toContain("SameSite=Lax");
@@ -128,8 +129,9 @@ describe("auth", () => {
 		});
 
 		expect(logout.statusCode).toBe(200);
-		expect(logout.json()).toEqual({ status: "ok" });
-		expect(String(logout.headers["set-cookie"] ?? "")).toContain("__Host-nostos.sid=;");
+	expect(logout.json()).toEqual({ status: "ok" });
+	const cookieName = process.env.NODE_ENV === "production" ? "__Host-nostos.sid" : "nostos.sid";
+	expect(String(logout.headers["set-cookie"] ?? "")).toContain(`${cookieName}=;`);
 		expect(auditActions(mock)).toContain("auth.logout");
 
 		const me = await app.inject({ method: "GET", url: "/v1/auth/me", headers: { cookie } });

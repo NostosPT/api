@@ -1,6 +1,6 @@
 import { clearSessionCookie, setSessionCookie } from "../../auth/cookies.js";
 import { requireAuth } from "../../auth/context.js";
-import { SESSION_COOKIE_NAME } from "../../auth/session.js";
+import { SESSION_COOKIE_NAME, DEV_SESSION_COOKIE_NAME } from "../../auth/session.js";
 import { config } from "../../config/index.js";
 import { AuthenticationError } from "../../errors/appError.js";
 import { createRouter } from "../../routing/router.js";
@@ -28,7 +28,7 @@ function cookieSettings() {
 }
 
 function requestToken(request: { cookies?: Record<string, string | undefined> }): string {
-	return request.cookies?.[SESSION_COOKIE_NAME] ?? "";
+	return request.cookies?.[SESSION_COOKIE_NAME] ?? request.cookies?.[DEV_SESSION_COOKIE_NAME] ?? "";
 }
 
 router.post(
