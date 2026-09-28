@@ -1,4 +1,4 @@
-﻿export type NodeEnvironment =
+export type NodeEnvironment =
 	| "development"
 	| "production"
 	| "test";

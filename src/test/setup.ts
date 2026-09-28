@@ -1,4 +1,4 @@
-// Test setup - runs before all tests
+﻿// Test setup - runs before all tests
 // Sets up test environment variables before any config is loaded
 
 process.env.NODE_ENV ??= "test";

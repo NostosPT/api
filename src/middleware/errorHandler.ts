@@ -1,10 +1,20 @@
 import type { FastifyInstance } from "fastify";
+import { AppError } from "../errors/appError.js";
 import * as logger from "../logging/logger.js";
 
 interface FastifyLikeError {
 	message?: string;
 	code?: string;
 	statusCode?: number;
+	validation?: Array<{
+		instancePath?: string;
+		message?: string;
+	}>;
+}
+
+interface ValidationIssue {
+	field: string;
+	message: string;
 }
 
 interface ErrorResponse {
@@ -13,6 +23,7 @@ interface ErrorResponse {
 		statusCode: number;
 		message: string;
 		requestId: string;
+		details?: ValidationIssue[];
 	};
 }
 
@@ -21,6 +32,10 @@ function isErrorObject(error: unknown): error is FastifyLikeError {
 }
 
 function getStatusCode(error: unknown): number {
+	if (error instanceof AppError) {
+		return error.statusCode;
+	}
+
 	if (
 		isErrorObject(error) &&
 		typeof error.statusCode === "number" &&
@@ -37,6 +52,10 @@ function getErrorCode(
 	error: unknown,
 	statusCode: number,
 ): string {
+	if (error instanceof AppError) {
+		return error.code;
+	}
+
 	if (isErrorObject(error)) {
 		switch (error.code) {
 			case "FST_ERR_CTP_INVALID_JSON_BODY":
@@ -64,7 +83,26 @@ function getErrorCode(
 	}
 }
 
+function getValidationDetails(error: unknown): ValidationIssue[] | undefined {
+	if (!isErrorObject(error) || error.code !== "FST_ERR_VALIDATION") {
+		return undefined;
+	}
+
+	if (!Array.isArray(error.validation)) {
+		return [];
+	}
+
+	return error.validation.map((issue) => ({
+		field: issue.instancePath && issue.instancePath !== "" ? issue.instancePath : "(body)",
+		message: issue.message ?? "Invalid value",
+	}));
+}
+
 function getErrorMessage(error: unknown, statusCode: number): string {
+	if (error instanceof AppError) {
+		return error.message;
+	}
+
 	if (statusCode >= 500) {
 		return "Internal server error";
 	}
@@ -105,6 +143,7 @@ export async function registerErrorHandler(app: FastifyInstance): Promise<void> 
 		const statusCode = getStatusCode(error);
 		const code = getErrorCode(error, statusCode);
 		const message = getErrorMessage(error, statusCode);
+		const details = getValidationDetails(error);
 
 		logger.error(`Request failed with status ${statusCode} and code ${code} for request ${request.method} ${request.url} with requestId ${request.id}`);
 
@@ -114,6 +153,7 @@ export async function registerErrorHandler(app: FastifyInstance): Promise<void> 
 				statusCode,
 				message,
 				requestId: request.id,
+				...(details === undefined ? {} : { details }),
 			},
 		};
 
