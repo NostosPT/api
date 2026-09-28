@@ -184,6 +184,23 @@ Secrets and environment-specific values must never be committed to the repositor
 
 Use `.env.example` as the reference for required configuration.
 
+### SeaweedFS object storage
+
+The photo-upload flow uses SeaweedFS through its S3-compatible API. Start the
+single-node, persistent development service with:
+
+```bash
+docker compose -f compose.seaweedfs.yml up -d
+```
+
+Set strong `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` values in `.env`.
+For an API running on the host, set both `S3_ENDPOINT` and
+`S3_PUBLIC_ENDPOINT` to `http://localhost:8333`. If the API later runs inside
+Docker, set `S3_ENDPOINT=http://seaweedfs:8333` while keeping
+`S3_PUBLIC_ENDPOINT` as the browser-reachable media URL. Set
+`SEAWEED_S3_ALLOWED_ORIGINS` to the exact dashboard origins; it is used by
+SeaweedFS for direct, presigned browser uploads.
+
 ## Security
 
 Security middleware is enabled centrally rather than implemented individually in every route.

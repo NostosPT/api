@@ -19,18 +19,24 @@ function bucket(): string {
 	return config.storage.bucket as string;
 }
 
-let client: S3Client | null = null;
+const clients = new Map<string, S3Client>();
 
-function getClient(): S3Client | null {
+function getClient(endpoint: string | undefined): S3Client | null {
 	if (!isConfigured()) {
 		return null;
 	}
 
-	if (client === null) {
+	if (endpoint === undefined) {
+		return null;
+	}
+
+	let client = clients.get(endpoint);
+
+	if (client === undefined) {
 		const storage = config.storage;
 
 		client = new S3Client({
-			endpoint: storage.endpoint,
+			endpoint,
 			region: storage.region,
 			credentials: {
 				accessKeyId: storage.accessKeyId as string,
@@ -40,6 +46,7 @@ function getClient(): S3Client | null {
 			// self-hosted S3 implementations (S3_FORCE_PATH_STYLE).
 			forcePathStyle: storage.forcePathStyle,
 		});
+		clients.set(endpoint, client);
 	}
 
 	return client;
@@ -47,7 +54,9 @@ function getClient(): S3Client | null {
 
 export const s3Storage: StoragePort = {
 	async presignPut(key: string, options: PresignPutOptions): Promise<string | null> {
-		const s3 = getClient();
+		// The browser must use a public address. The API can still use the
+		// Docker-internal address for validation and reads after upload.
+		const s3 = getClient(config.storage.publicEndpoint ?? config.storage.endpoint);
 
 		if (s3 === null) {
 			return null;
@@ -66,7 +75,7 @@ export const s3Storage: StoragePort = {
 	},
 
 	async presignGet(key: string, expiresInSeconds?: number): Promise<string | null> {
-		const s3 = getClient();
+		const s3 = getClient(config.storage.publicEndpoint ?? config.storage.endpoint);
 
 		if (s3 === null) {
 			return null;
@@ -78,7 +87,7 @@ export const s3Storage: StoragePort = {
 	},
 
 	async headObject(key: string): Promise<{ size: number } | null> {
-		const s3 = getClient();
+		const s3 = getClient(config.storage.endpoint);
 
 		if (s3 === null) {
 			return null;
@@ -95,7 +104,7 @@ export const s3Storage: StoragePort = {
 	},
 
 	async getFirstBytes(key: string, count: number): Promise<Uint8Array | null> {
-		const s3 = getClient();
+		const s3 = getClient(config.storage.endpoint);
 
 		if (s3 === null) {
 			return null;
@@ -114,7 +123,7 @@ export const s3Storage: StoragePort = {
 	},
 
 	async getObjectSha256(key: string): Promise<string | null> {
-		const s3 = getClient();
+		const s3 = getClient(config.storage.endpoint);
 
 		if (s3 === null) {
 			return null;
