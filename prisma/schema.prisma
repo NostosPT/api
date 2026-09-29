@@ -105,6 +105,21 @@ enum GalleryStatus {
   ARCHIVED
 }
 
+// Field Atlas scouting locations (REG-ATLAS-01): editorial content with
+// optional point or GeoJSON area geometry. No PostGIS yet — coordinates are
+// plain Floats and areas are Json (RFC 7946), so a future GIST migration
+// needs no DTO or API changes.
+enum AtlasLocationStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AtlasGeometryKind {
+  POINT
+  AREA
+}
+
 enum PurchaseScope {
   PHOTO
   PACK
@@ -168,6 +183,7 @@ model User {
   requestNotes      RequestNote[]     @relation("RequestNoteAuthor")
   authoredActivity  ClientActivity[]  @relation("ActivityAuthor")
   auditActs          AuditLog[]        @relation("AuditActor")
+  atlasAuthored      AtlasLocation[]   @relation("AtlasAuthor")
 
   @@index([role, status])
 }
@@ -333,6 +349,7 @@ model Category {
   updatedAt   DateTime       @updatedAt
 
   photos PhotoCategory[]
+  atlasLocations AtlasLocationCategory[]
 }
 
 model PhotoCategory {
@@ -419,6 +436,8 @@ model Photo {
   albumEntries    AlbumPhoto[]
   albumsCovered   Album[]         @relation("AlbumCover")
   purchaseEntries PurchasePhoto[]
+  atlasEntries    AtlasLocationPhoto[]
+  atlasCovers     AtlasLocation[] @relation("AtlasCover")
 
   // public listing reads (status, visibility); trigram name/title search in migration SQL
   @@index([status, visibility, createdAt(sort: Desc)])
@@ -572,6 +591,70 @@ model PurchasePhoto {
   addedAt    DateTime @default(now())
 
   @@id([purchaseId, photoId])
+  @@index([photoId])
+}
+
+// ---------------------------------------------------------------------------
+// Field Atlas scouting locations — editorial content with optional point
+// or GeoJSON area geometry. Reference photos are existing Photo rows;
+// coverPhoto is the location hero, separate from reference entries.
+// ---------------------------------------------------------------------------
+
+model AtlasLocation {
+  id             String              @id @default(uuid()) @db.Uuid
+  slug           String              @unique // public identifier, guessable OK
+  name           String
+  description    String?
+  country        String? // ISO-3166-1 alpha-2, e.g. "PT"
+  region         String?
+  city           String?
+  geometryKind   AtlasGeometryKind   @default(POINT)
+  // Point geometry; NULL when AREA. Plain Floats (no PostGIS yet).
+  latitude       Float?
+  longitude      Float?
+  // GeoJSON Polygon/MultiPolygon (RFC 7946) when AREA; NULL when POINT.
+  geoJson        Json?               @db.JsonB
+  whyInteresting String?
+  subjects       String?
+  accessNotes    String?
+  safetyNotes    String?
+  status         AtlasLocationStatus @default(DRAFT)
+  coverPhotoId   String?             @db.Uuid
+  coverPhoto     Photo?              @relation("AtlasCover", fields: [coverPhotoId], references: [id], onDelete: SetNull)
+  authorId       String?             @db.Uuid
+  author         User?               @relation("AtlasAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  publishedAt    DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  categories AtlasLocationCategory[]
+  photos     AtlasLocationPhoto[]
+
+  @@index([status])
+  @@index([country])
+  @@index([status, country])
+}
+
+model AtlasLocationCategory {
+  locationId String        @db.Uuid
+  location   AtlasLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  categoryId String        @db.Uuid
+  category   Category      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([locationId, categoryId])
+  @@index([categoryId])
+}
+
+model AtlasLocationPhoto {
+  locationId String        @db.Uuid
+  location   AtlasLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  photoId    String        @db.Uuid
+  photo      Photo         @relation(fields: [photoId], references: [id], onDelete: Restrict)
+  caption    String?
+  position   Int // editorial order, dense
+
+  @@id([locationId, photoId])
+  @@unique([locationId, position])
   @@index([photoId])
 }
 

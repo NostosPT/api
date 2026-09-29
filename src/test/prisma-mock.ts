@@ -185,6 +185,9 @@ export function resetMock(mock: MockPrisma): void {
 	mock.albumPhoto.rows.length = 0;
 	mock.favorite.rows.length = 0;
 	mock.purchase.rows.length = 0;
+	mock.atlasLocation.rows.length = 0;
+	mock.atlasLocationCategory.rows.length = 0;
+	mock.atlasLocationPhoto.rows.length = 0;
 mock.gallery.rows.length = 0;
 	mock.galleryPhoto.rows.length = 0;
 	mock.photoCategory.rows.length = 0;
@@ -418,6 +421,9 @@ export interface MockPrisma {
 	albumTag: MockModel;
 	favorite: MockModel;
 	purchase: MockModel;
+	atlasLocation: MockModel;
+	atlasLocationCategory: MockModel;
+	atlasLocationPhoto: MockModel;
 	gallery: MockModel;
 	galleryPhoto: MockModel;
 	photoCategory: MockModel;
@@ -499,6 +505,28 @@ export function createMockPrisma(): MockPrisma {
 		albumPhoto: new MockModel([["albumId", "position"], ["albumId", "photoId"]], ["addedAt"]),
 		favorite: new MockModel([["clientId", "albumId", "photoId"]], ["createdAt"]),
 		purchase: new MockModel([], ["createdAt", "updatedAt"], ["note", "completedAt"]),
+		atlasLocation: new MockModel(
+			[["slug"]],
+			["createdAt", "updatedAt"],
+			[
+				"description",
+				"country",
+				"region",
+				"city",
+				"latitude",
+				"longitude",
+				"geoJson",
+				"whyInteresting",
+				"subjects",
+				"accessNotes",
+				"safetyNotes",
+				"coverPhotoId",
+				"publishedAt",
+				"authorId",
+			],
+		),
+		atlasLocationCategory: new MockModel([["locationId", "categoryId"]], []),
+		atlasLocationPhoto: new MockModel([["locationId", "photoId"], ["locationId", "position"]], ["addedAt"], ["caption"]),
 		gallery: new MockModel([["slug"], ["position"]], ["createdAt", "updatedAt"], ["description", "position"]),
 		galleryPhoto: new MockModel([["galleryId", "position"], ["galleryId", "photoId"]], ["addedAt"]),
 		photoCategory: new MockModel([["photoId", "categoryId"]], []),

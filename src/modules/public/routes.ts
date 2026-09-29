@@ -1,14 +1,17 @@
 import type { Static } from "typebox";
 import { createRouter } from "../../routing/router.js";
 import {
+	ListPublicAtlasQuery,
 	ListPublicGalleriesQuery,
 	ListPublicPhotosQuery,
 	PhotoNumberParams,
 	SlugParams,
 } from "./schemas.js";
 import {
+	getPublicAtlasLocation,
 	getPublicGallery,
 	getPublicPhoto,
+	listPublicAtlasLocations,
 	listPublicGalleries,
 	listPublicPhotos,
 } from "./service.js";
@@ -55,4 +58,26 @@ router.get(
 		return getPublicPhoto(params.number);
 	},
 	{ schema: { params: PhotoNumberParams } },
+);
+
+router.get(
+	"/atlas/locations",
+	async (request) => {
+		const query = request.query as Static<typeof ListPublicAtlasQuery>;
+		const page = query.page ?? 1;
+		const pageSize = query.pageSize ?? 20;
+
+		return listPublicAtlasLocations(page, pageSize, query);
+	},
+	{ schema: { querystring: ListPublicAtlasQuery } },
+);
+
+router.get(
+	"/atlas/locations/:slug",
+	async (request) => {
+		const params = request.params as Static<typeof SlugParams>;
+
+		return getPublicAtlasLocation(params.slug);
+	},
+	{ schema: { params: SlugParams } },
 );

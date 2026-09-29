@@ -24,6 +24,24 @@ export const PhotoNumberParams = Type.Object(
 
 export type PhotoNumberParams = Static<typeof PhotoNumberParams>;
 
+const CountryCode = Type.String({ pattern: "^[A-Z]{2}$" });
+
+// "minLng,minLat,maxLng,maxLat" for map viewport filtering.
+const BboxString = Type.String({ pattern: "^-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?,-?\\d+(\\.\\d+)?$" });
+
+export const ListPublicAtlasQuery = Type.Object(
+	{
+		...PaginationQuery.properties,
+		q: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+		country: Type.Optional(CountryCode),
+		category: Type.Optional(SlugString),
+		bbox: Type.Optional(BboxString),
+	},
+	StrictObject,
+);
+
+export type ListPublicAtlasQuery = Static<typeof ListPublicAtlasQuery>;
+
 // "featured" narrows the listing to photos holding at least one featured
 // pin in a published gallery (global ordering across collections is newest;
 // per-collection editorial order lives on GalleryPhoto.position).

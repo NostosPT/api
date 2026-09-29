@@ -293,3 +293,82 @@ describe("public photo listing", () => {
 		expect(page1.json().items[0].number).not.toBe(page2.json().items[0].number);
 	});
 });
+
+describe("public atlas endpoints", () => {
+	// Runs after the shared outer seed above.
+	beforeEach(() => {
+		const pub = mock.atlasLocation.create({
+			data: {
+				slug: "graca-miradouro",
+				name: "Miradouro da Graça",
+				description: "Castle hill light.",
+				country: "PT",
+				city: "Lisbon",
+				geometryKind: "POINT",
+				latitude: 38.7119,
+				longitude: -9.1257,
+				status: "PUBLISHED",
+			},
+		}) as { id: string; slug: string };
+
+		mock.atlasLocation.create({
+			data: { slug: "wip-spot", name: "Work in progress", geometryKind: "POINT", latitude: 0, longitude: 0, status: "DRAFT" },
+		});
+
+		const category = mock.category.create({
+			data: { name: "Street", slug: "street", status: "ACTIVE", position: 9 },
+		}) as { id: string; slug: string };
+
+		mock.atlasLocationCategory.create({ data: { locationId: pub.id, categoryId: category.id } });
+		mock.atlasLocationPhoto.create({
+			data: {
+				locationId: pub.id,
+				photoId: (mock.photo.findFirst({ where: { number: 101 } }) as { id: string }).id,
+				caption: "Dawn",
+				position: 0,
+			},
+		});
+	});
+
+	it("lists only published locations with categories", async () => {
+		const res = await app.inject({ method: "GET", url: "/v1/public/atlas/locations" });
+
+		expect(res.statusCode).toBe(200);
+		expect(res.json().total).toBe(1);
+		expect(res.json().items[0].slug).toBe("graca-miradouro");
+		expect(res.json().items[0].categories).toEqual([{ slug: "street", name: "Street" }]);
+		expect(res.json().items[0]).not.toHaveProperty("authorId");
+	});
+
+	it("returns location detail with photos, cover and editorial fields", async () => {
+		const res = await app.inject({ method: "GET", url: "/v1/public/atlas/locations/graca-miradouro" });
+
+		expect(res.statusCode).toBe(200);
+		const body = res.json();
+		expect(body.photos).toHaveLength(1);
+		expect(body.photos[0]).toMatchObject({ number: 101, caption: "Dawn", position: 0 });
+		expect(body).not.toHaveProperty("authorId");
+	});
+
+	it("returns 404 for draft and unknown slugs", async () => {
+		expect((await app.inject({ method: "GET", url: "/v1/public/atlas/locations/wip-spot" })).statusCode).toBe(404);
+		expect((await app.inject({ method: "GET", url: "/v1/public/atlas/locations/unknown" })).statusCode).toBe(404);
+	});
+
+	it("filters by country, category, query and bbox", async () => {
+		const country = await app.inject({ method: "GET", url: "/v1/public/atlas/locations?country=ES" });
+		expect(country.json().total).toBe(0);
+
+		const category = await app.inject({ method: "GET", url: "/v1/public/atlas/locations?category=street" });
+		expect(category.json().total).toBe(1);
+
+		const query = await app.inject({ method: "GET", url: "/v1/public/atlas/locations?q=gra%C3%A7a" });
+		expect(query.json().total).toBe(1);
+
+		const bbox = await app.inject({ method: "GET", url: "/v1/public/atlas/locations?bbox=-10,38,-9,39" });
+		expect(bbox.json().total).toBe(1);
+
+		const outside = await app.inject({ method: "GET", url: "/v1/public/atlas/locations?bbox=0,0,1,1" });
+		expect(outside.json().total).toBe(0);
+	});
+});

@@ -1,4 +1,4 @@
-import type { Category, Gallery, Photo, Tag } from "@prisma/client";
+import type { Prisma, AtlasLocation, Category, Gallery, Photo, Tag } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 
 export interface PublicPhotoWhere {
@@ -216,5 +216,67 @@ export async function findPublicTags(photoId: string): Promise<Tag[]> {
 
 	return prisma.tag.findMany({
 		where: { id: { in: tagIds }, status: "ACTIVE", visibility: "PUBLIC" },
+	});
+}
+
+export interface PublicAtlasWhere {
+	status?: "PUBLISHED";
+	country?: string;
+	id?: { in: string[] };
+	latitude?: { gte?: number; lte?: number };
+	longitude?: { gte?: number; lte?: number };
+	OR?: Prisma.AtlasLocationWhereInput[];
+}
+
+export async function listPublishedAtlasLocations(
+	where: PublicAtlasWhere,
+	skip: number,
+	take: number,
+): Promise<AtlasLocation[]> {
+	return prisma.atlasLocation.findMany({
+		where: where as Prisma.AtlasLocationWhereInput,
+		orderBy: { createdAt: "desc" },
+		skip,
+		take,
+	});
+}
+
+export async function countPublishedAtlasLocations(where: PublicAtlasWhere): Promise<number> {
+	return prisma.atlasLocation.count({ where: where as Prisma.AtlasLocationWhereInput });
+}
+
+export async function findAtlasBySlugPublic(slug: string): Promise<AtlasLocation | null> {
+	return prisma.atlasLocation.findUnique({ where: { slug, status: "PUBLISHED" } });
+}
+
+export async function getPublishedAtlasEntries(
+	locationId: string,
+): Promise<{ photoId: string; caption: string | null; position: number }[]> {
+	const rows = await prisma.atlasLocationPhoto.findMany({ where: { locationId }, orderBy: { position: "asc" } });
+
+	return rows.map((row) => ({ photoId: row.photoId, caption: row.caption, position: row.position }));
+}
+
+export async function findAtlasLocationIdsByCategorySlug(slug: string): Promise<string[]> {
+	const category = await prisma.category.findUnique({ where: { slug, status: "ACTIVE" }, select: { id: true } });
+
+	if (category === null) {
+		return [];
+	}
+
+	const rows = await prisma.atlasLocationCategory.findMany({ where: { categoryId: category.id } });
+
+	return [...new Set(rows.map((row) => row.locationId))];
+}
+
+export async function findAtlasCategories(locationId: string): Promise<Category[]> {
+	const rows = await prisma.atlasLocationCategory.findMany({ where: { locationId }, select: { categoryId: true } });
+
+	if (rows.length === 0) {
+		return [];
+	}
+
+	return prisma.category.findMany({
+		where: { id: { in: rows.map((row) => row.categoryId) }, status: "ACTIVE" },
 	});
 }

@@ -1,5 +1,6 @@
 import { config } from "../../config/index.js";
 import { NotFoundError, ValidationError } from "../../errors/appError.js";
+import { parseBbox } from "../atlas/service.js";
 import {
 	findPhotoByNumberPublic,
 	findPhotographerName,
@@ -15,16 +16,27 @@ import {
 	findGalleryBySlugPublic,
 	getPublishedGalleryEntries,
 	findPhotosByIdsPublic,
+	listPublishedAtlasLocations,
+	countPublishedAtlasLocations,
+	findAtlasBySlugPublic,
+	getPublishedAtlasEntries,
+	findAtlasLocationIdsByCategorySlug,
+	findAtlasCategories,
+	type PublicAtlasWhere,
 } from "./repository.js";
 import {
 	toPublicGalleryDTO,
 	toPublicPhotoSummary,
+	type PublicAtlasCoverRef,
+	type PublicAtlasLocationDetailDTO,
+	type PublicAtlasLocationPage,
+	type PublicAtlasPhotoRef,
 	type PublicGalleryDetailDTO,
 	type PublicPhotoDetailDTO,
 	type PublicPhotoPage,
 	type PublicGalleryPage,
 } from "./dto.js";
-import type { ListPublicPhotosQuery } from "./schemas.js";
+import type { ListPublicAtlasQuery, ListPublicPhotosQuery } from "./schemas.js";
 
 function parseDate(value: string | undefined): Date | null {
 	if (!value) {
@@ -219,5 +231,124 @@ export async function getPublicPhoto(number: number): Promise<PublicPhotoDetailD
 		categories: categories.map((c) => ({ slug: c.slug, name: c.name })),
 		tags: tags.map((t) => ({ slug: t.slug, name: t.name })),
 		createdAt: photo.createdAt.toISOString(),
+	};
+}
+
+type PublishedAtlasLocation = NonNullable<Awaited<ReturnType<typeof findAtlasBySlugPublic>>>;
+
+function toPublicAtlasSummary(
+	location: PublishedAtlasLocation,
+	categories: { slug: string; name: string }[],
+) {
+	return {
+		slug: location.slug,
+		name: location.name,
+		description: location.description,
+		country: location.country,
+		region: location.region,
+		city: location.city,
+		geometryKind: location.geometryKind,
+		latitude: location.latitude,
+		longitude: location.longitude,
+		geoJson: (location.geoJson ?? null) as unknown,
+		categories: categories.map((category) => ({ slug: category.slug, name: category.name })),
+	};
+}
+
+export async function listPublicAtlasLocations(
+	page: number,
+	pageSize: number,
+	query: ListPublicAtlasQuery,
+): Promise<PublicAtlasLocationPage> {
+	let candidateIds: Set<string> | null = null;
+
+	if (query.category !== undefined) {
+		candidateIds = new Set(await findAtlasLocationIdsByCategorySlug(query.category));
+	}
+
+	const bbox = query.bbox === undefined ? undefined : parseBbox(query.bbox);
+
+	const where: PublicAtlasWhere = {
+		status: "PUBLISHED",
+		...(query.country === undefined ? {} : { country: query.country }),
+		...(candidateIds === null ? {} : { id: { in: [...candidateIds] } }),
+		...(bbox === undefined
+			? {}
+			: {
+					latitude: { gte: bbox.minLat, lte: bbox.maxLat },
+					longitude: { gte: bbox.minLng, lte: bbox.maxLng },
+				}),
+		...(query.q === undefined
+			? {}
+			: {
+					OR: [
+						{ name: { contains: query.q, mode: "insensitive" } },
+						{ description: { contains: query.q, mode: "insensitive" } },
+						{ city: { contains: query.q, mode: "insensitive" } },
+						{ region: { contains: query.q, mode: "insensitive" } },
+					],
+				}),
+	};
+
+	const [locations, total] = await Promise.all([
+		listPublishedAtlasLocations(where, (page - 1) * pageSize, pageSize),
+		countPublishedAtlasLocations(where),
+	]);
+
+	const items = await Promise.all(
+		locations.map(async (location) => ({
+			...toPublicAtlasSummary(location, await findAtlasCategories(location.id)),
+		})),
+	);
+
+	return { items, page, pageSize, total };
+}
+
+export async function getPublicAtlasLocation(slug: string): Promise<PublicAtlasLocationDetailDTO> {
+	const location = await findAtlasBySlugPublic(slug);
+
+	if (location === null) {
+		throw new NotFoundError("Atlas location not found");
+	}
+
+	const [categories, entries] = await Promise.all([
+		findAtlasCategories(location.id),
+		getPublishedAtlasEntries(location.id),
+	]);
+
+	const photoIds = entries.map((entry) => entry.photoId);
+	const photos = photoIds.length === 0 ? [] : await findPhotosByIdsPublic(photoIds);
+	const photoMap = new Map(photos.map((photo) => [photo.id, photo]));
+
+	const publicPhotos: PublicAtlasPhotoRef[] = entries
+		.map((entry) => {
+			const photo = photoMap.get(entry.photoId);
+
+			if (!photo) {
+				return null;
+			}
+
+			return { number: photo.number, title: photo.title, caption: entry.caption, position: entry.position };
+		})
+		.filter((photo): photo is NonNullable<typeof photo> => photo !== null);
+
+	let coverPhoto: PublicAtlasCoverRef | null = null;
+
+	if (location.coverPhotoId !== null) {
+		const cover = photoMap.get(location.coverPhotoId) ?? (await findPhotosByIdsPublic([location.coverPhotoId]))[0];
+
+		if (cover !== undefined) {
+			coverPhoto = { number: cover.number, title: cover.title };
+		}
+	}
+
+	return {
+		...toPublicAtlasSummary(location, categories),
+		whyInteresting: location.whyInteresting,
+		subjects: location.subjects,
+		accessNotes: location.accessNotes,
+		safetyNotes: location.safetyNotes,
+		coverPhoto,
+		photos: publicPhotos,
 	};
 }

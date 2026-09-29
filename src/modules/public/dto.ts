@@ -97,6 +97,48 @@ export interface PublicPhotoPage {
 	total: number;
 }
 
+export interface PublicAtlasLocationDTO {
+	slug: string;
+	name: string;
+	description: string | null;
+	country: string | null;
+	region: string | null;
+	city: string | null;
+	geometryKind: string;
+	latitude: number | null;
+	longitude: number | null;
+	geoJson: unknown;
+	categories: PublicTaxonomyRef[];
+}
+
+export interface PublicAtlasPhotoRef {
+	number: number;
+	title: string | null;
+	caption: string | null;
+	position: number;
+}
+
+export interface PublicAtlasCoverRef {
+	number: number;
+	title: string | null;
+}
+
+export interface PublicAtlasLocationDetailDTO extends PublicAtlasLocationDTO {
+	whyInteresting: string | null;
+	subjects: string | null;
+	accessNotes: string | null;
+	safetyNotes: string | null;
+	coverPhoto: PublicAtlasCoverRef | null;
+	photos: PublicAtlasPhotoRef[];
+}
+
+export interface PublicAtlasLocationPage {
+	items: PublicAtlasLocationDTO[];
+	page: number;
+	pageSize: number;
+	total: number;
+}
+
 export interface PublicGalleryPage {
 	items: PublicGalleryDTO[];
 	page: number;
