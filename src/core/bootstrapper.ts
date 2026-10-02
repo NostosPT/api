@@ -3,6 +3,7 @@ import { createApp } from "../app.js";
 import { loadConfig } from "../config/index.js";
 import { disconnectPrisma } from "../db/prisma.js";
 import * as logger from "../logging/logger.js";
+import { startMonitoring } from "../monitoring/monitor.js";
 import { HttpServer } from "./httpServer.js";
 import { ShutdownManager } from "./shutdown.js";
 
@@ -31,7 +32,15 @@ export class Bootstrapper {
 			() => httpServer.start(),
 		);
 
+		const monitor = await this.runStep(
+			"Health monitoring",
+			() => startMonitoring(),
+		);
+
+		// Handlers run in order: the monitor flushes buffered check results
+		// before the Prisma connection closes.
 		ShutdownManager.register(() => httpServer.stop());
+		ShutdownManager.register(() => monitor?.stop());
 		ShutdownManager.register(() => disconnectPrisma());
 
 		const totalDuration = Math.round(performance.now() - totalStart);

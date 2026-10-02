@@ -11,6 +11,14 @@ export const PHOTO_KEY_PREFIXES = {
 	watermarks: "watermarks",
 } as const;
 
+// Reserved for storage health probes (write round-trip). Excluded from the
+// off-site backup sync; never holds photo data.
+export const HEALTH_PROBE_PREFIX = "_health";
+
+export function healthProbeKey(): string {
+	return `${HEALTH_PROBE_PREFIX}/${randomUUID()}`;
+}
+
 export type PhotoKeyPrefix = (typeof PHOTO_KEY_PREFIXES)[keyof typeof PHOTO_KEY_PREFIXES];
 
 /**

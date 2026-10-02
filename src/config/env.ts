@@ -82,6 +82,66 @@ function parseStorageProvider(value: string | undefined): "s3" {
 	throw new Error('Invalid STORAGE_PROVIDER configuration (only "s3" is supported)');
 }
 
+// Absolute http(s) URL without credentials, normalized without a trailing
+// slash so paths can be appended.
+function optionalHttpUrl(value: string | undefined, name: string): string | undefined {
+	const trimmed = optional(value);
+
+	if (trimmed === undefined) {
+		return undefined;
+	}
+
+	let url: URL;
+
+	try {
+		url = new URL(trimmed);
+	}
+	catch {
+		throw new Error(`Invalid ${name} configuration`);
+	}
+
+	if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password) {
+		throw new Error(`Invalid ${name} configuration`);
+	}
+
+	return url.toString().replace(/\/+$/, "");
+}
+
+// Deliberately strict: no whitespace or angle brackets, so values can never
+// smuggle extra headers or recipients into an email request.
+const EMAIL_PATTERN = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
+
+function parseEmailList(value: string | undefined, name: string): string[] {
+	const emails = (value ?? "")
+		.split(",")
+		.map((email) => email.trim().toLowerCase())
+		.filter(Boolean);
+
+	if (emails.some((email) => !EMAIL_PATTERN.test(email))) {
+		throw new Error(`Invalid ${name} configuration`);
+	}
+
+	return [...new Set(emails)];
+}
+
+// Accepts "alerts@example.com" or "Nostos Alerts <alerts@example.com>".
+function parseSender(value: string | undefined, name: string): string | undefined {
+	const trimmed = optional(value);
+
+	if (trimmed === undefined) {
+		return undefined;
+	}
+
+	const named = /^([^<>\r\n"]+?)\s*<([^<>]+)>$/.exec(trimmed);
+	const address = named ? named[2] : trimmed;
+
+	if (!EMAIL_PATTERN.test(address)) {
+		throw new Error(`Invalid ${name} configuration`);
+	}
+
+	return trimmed;
+}
+
 function requiredSecret(name: string, minLength: number): string {
 	const value = process.env[name];
 
@@ -105,6 +165,29 @@ export function validateEnv(): EnvConfig {
 		.map((origin) => origin.trim())
 		.filter(Boolean);
 
+	const s3PublicEndpoint = optional(process.env.S3_PUBLIC_ENDPOINT);
+	const monitorPublicStorage = parseBoolean(process.env.MONITOR_PUBLIC_STORAGE, false);
+
+	// The public storage probe reuses the presigning endpoint; enabling it
+	// without one is a configuration mistake, not a silent no-op.
+	if (monitorPublicStorage && s3PublicEndpoint === undefined) {
+		throw new Error("Invalid MONITOR_PUBLIC_STORAGE configuration (requires S3_PUBLIC_ENDPOINT)");
+	}
+
+	const tlsDegradedDays = parsePositiveInt(process.env.MONITOR_TLS_DEGRADED_DAYS, "MONITOR_TLS_DEGRADED_DAYS", 14);
+	const tlsDownDays = parsePositiveInt(process.env.MONITOR_TLS_DOWN_DAYS, "MONITOR_TLS_DOWN_DAYS", 3);
+
+	if (tlsDownDays >= tlsDegradedDays) {
+		throw new Error("Invalid MONITOR_TLS_DOWN_DAYS configuration (must be below MONITOR_TLS_DEGRADED_DAYS)");
+	}
+
+	const backupDegradedHours = parsePositiveInt(process.env.MONITOR_BACKUP_DEGRADED_HOURS, "MONITOR_BACKUP_DEGRADED_HOURS", 26);
+	const backupDownHours = parsePositiveInt(process.env.MONITOR_BACKUP_DOWN_HOURS, "MONITOR_BACKUP_DOWN_HOURS", 50);
+
+	if (backupDownHours <= backupDegradedHours) {
+		throw new Error("Invalid MONITOR_BACKUP_DOWN_HOURS configuration (must exceed MONITOR_BACKUP_DEGRADED_HOURS)");
+	}
+
 	return {
 		NODE_ENV: nodeEnv,
 		HOST: process.env.HOST ?? "127.0.0.1",
@@ -124,9 +207,33 @@ export function validateEnv(): EnvConfig {
 		S3_BUCKET: optional(process.env.S3_BUCKET),
 		S3_ACCESS_KEY_ID: optional(process.env.S3_ACCESS_KEY_ID),
 		S3_SECRET_ACCESS_KEY: optional(process.env.S3_SECRET_ACCESS_KEY),
-		S3_PUBLIC_ENDPOINT: optional(process.env.S3_PUBLIC_ENDPOINT),
+		S3_PUBLIC_ENDPOINT: s3PublicEndpoint,
 		S3_FORCE_PATH_STYLE: parseBoolean(process.env.S3_FORCE_PATH_STYLE, false),
 		STORAGE_PROVIDER: parseStorageProvider(process.env.STORAGE_PROVIDER),
 		SITE_COPYRIGHT: optional(process.env.SITE_COPYRIGHT),
+		MONITOR_ENABLED: parseBoolean(process.env.MONITOR_ENABLED, nodeEnv === "production"),
+		MONITOR_PUBLIC_URL: optionalHttpUrl(process.env.MONITOR_PUBLIC_URL, "MONITOR_PUBLIC_URL"),
+		MONITOR_PUBLIC_STORAGE: monitorPublicStorage,
+		HEALTH_RETENTION_DAYS: parsePositiveInt(process.env.HEALTH_RETENTION_DAYS, "HEALTH_RETENTION_DAYS", 30),
+		MONITOR_INTERVAL_DATABASE_SECONDS: parsePositiveInt(process.env.MONITOR_INTERVAL_DATABASE_SECONDS, "MONITOR_INTERVAL_DATABASE_SECONDS", 60),
+		MONITOR_INTERVAL_STORAGE_SECONDS: parsePositiveInt(process.env.MONITOR_INTERVAL_STORAGE_SECONDS, "MONITOR_INTERVAL_STORAGE_SECONDS", 60),
+		MONITOR_INTERVAL_STORAGE_WRITE_SECONDS: parsePositiveInt(process.env.MONITOR_INTERVAL_STORAGE_WRITE_SECONDS, "MONITOR_INTERVAL_STORAGE_WRITE_SECONDS", 60 * 60),
+		MONITOR_INTERVAL_PUBLIC_SECONDS: parsePositiveInt(process.env.MONITOR_INTERVAL_PUBLIC_SECONDS, "MONITOR_INTERVAL_PUBLIC_SECONDS", 60),
+		MONITOR_INTERVAL_TLS_SECONDS: parsePositiveInt(process.env.MONITOR_INTERVAL_TLS_SECONDS, "MONITOR_INTERVAL_TLS_SECONDS", 6 * 60 * 60),
+		MONITOR_INTERVAL_BACKUP_SECONDS: parsePositiveInt(process.env.MONITOR_INTERVAL_BACKUP_SECONDS, "MONITOR_INTERVAL_BACKUP_SECONDS", 15 * 60),
+		MONITOR_FAILURE_THRESHOLD: parsePositiveInt(process.env.MONITOR_FAILURE_THRESHOLD, "MONITOR_FAILURE_THRESHOLD", 3),
+		MONITOR_RECOVERY_THRESHOLD: parsePositiveInt(process.env.MONITOR_RECOVERY_THRESHOLD, "MONITOR_RECOVERY_THRESHOLD", 2),
+		MONITOR_TIMEOUT_MS: parsePositiveInt(process.env.MONITOR_TIMEOUT_MS, "MONITOR_TIMEOUT_MS", 5_000),
+		MONITOR_PUBLIC_TIMEOUT_MS: parsePositiveInt(process.env.MONITOR_PUBLIC_TIMEOUT_MS, "MONITOR_PUBLIC_TIMEOUT_MS", 10_000),
+		MONITOR_DATABASE_SLOW_MS: parsePositiveInt(process.env.MONITOR_DATABASE_SLOW_MS, "MONITOR_DATABASE_SLOW_MS", 500),
+		MONITOR_STORAGE_SLOW_MS: parsePositiveInt(process.env.MONITOR_STORAGE_SLOW_MS, "MONITOR_STORAGE_SLOW_MS", 1_000),
+		MONITOR_PUBLIC_SLOW_MS: parsePositiveInt(process.env.MONITOR_PUBLIC_SLOW_MS, "MONITOR_PUBLIC_SLOW_MS", 2_000),
+		MONITOR_TLS_DEGRADED_DAYS: tlsDegradedDays,
+		MONITOR_TLS_DOWN_DAYS: tlsDownDays,
+		MONITOR_BACKUP_DEGRADED_HOURS: backupDegradedHours,
+		MONITOR_BACKUP_DOWN_HOURS: backupDownHours,
+		RESEND_API_KEY: optional(process.env.RESEND_API_KEY),
+		ALERT_EMAIL_FROM: parseSender(process.env.ALERT_EMAIL_FROM, "ALERT_EMAIL_FROM"),
+		ALERT_FALLBACK_RECIPIENTS: parseEmailList(process.env.ALERT_FALLBACK_RECIPIENTS, "ALERT_FALLBACK_RECIPIENTS"),
 	};
 }

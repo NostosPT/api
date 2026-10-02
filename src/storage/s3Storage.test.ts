@@ -85,3 +85,186 @@ describe("s3Storage presigning", () => {
 		await expect(s3Storage.presignGet("web/a.jpg")).resolves.toBeNull();
 	});
 });
+
+type SentCommand = { constructor: { name: string }; input: Record<string, unknown> };
+type SendImpl = (command: SentCommand, options?: { abortSignal?: AbortSignal }) => Promise<unknown>;
+
+// Intercepts every S3 request at the client level; no network involved.
+async function loadWithSend(impl: SendImpl): Promise<{ s3Storage: StoragePort; sent: SentCommand[] }> {
+	const sdk = await import("@aws-sdk/client-s3");
+	const sent: SentCommand[] = [];
+
+	vi.spyOn(sdk.S3Client.prototype, "send").mockImplementation(((command: SentCommand, options?: { abortSignal?: AbortSignal }) => {
+		sent.push(command);
+
+		return impl(command, options);
+	}) as never);
+
+	const { s3Storage } = await loadStorage();
+
+	return { s3Storage, sent };
+}
+
+function s3Error(name: string, status: number): Error {
+	return Object.assign(new Error(`${name}: internal detail http://seaweedfs:8333`), {
+		name,
+		$metadata: { httpStatusCode: status },
+	});
+}
+
+describe("s3Storage health probes", () => {
+	beforeEach(() => {
+		vi.restoreAllMocks();
+		configure({});
+	});
+
+	it("returns null when storage is not configured", async () => {
+		configure({ endpoint: undefined });
+		const { s3Storage, sent } = await loadWithSend(async () => ({}));
+
+		await expect(s3Storage.ping(1_000)).resolves.toBeNull();
+		await expect(s3Storage.writeRoundTrip(1_000)).resolves.toBeNull();
+		expect(sent).toEqual([]);
+	});
+
+	it("pings the configured bucket with HeadBucket", async () => {
+		const { s3Storage, sent } = await loadWithSend(async () => ({}));
+
+		await expect(s3Storage.ping(1_000)).resolves.toEqual({ ok: true });
+		expect(sent.map((command) => command.constructor.name)).toEqual(["HeadBucketCommand"]);
+		expect(sent[0].input).toEqual({ Bucket: "nostos" });
+	});
+
+	it("maps provider errors to sanitized codes", async () => {
+		const { s3Storage } = await loadWithSend(async () => {
+			throw s3Error("AccessDenied", 403);
+		});
+
+		await expect(s3Storage.ping(1_000)).resolves.toEqual({ ok: false, errorCode: "s3_AccessDenied" });
+	});
+
+	it("falls back to the HTTP status when the SDK cannot name the error", async () => {
+		const { s3Storage } = await loadWithSend(async () => {
+			throw s3Error("Unknown", 403);
+		});
+
+		await expect(s3Storage.ping(1_000)).resolves.toEqual({ ok: false, errorCode: "http_403" });
+	});
+
+	it("maps network errors to their lowercase system code", async () => {
+		const { s3Storage } = await loadWithSend(async () => {
+			throw Object.assign(new Error("connect ECONNREFUSED 10.0.0.2:8333"), { code: "ECONNREFUSED" });
+		});
+
+		await expect(s3Storage.ping(1_000)).resolves.toEqual({ ok: false, errorCode: "econnrefused" });
+	});
+
+	it("reports a timeout when the request outlives the deadline", async () => {
+		const { s3Storage } = await loadWithSend((_command, options) => new Promise((_, reject) => {
+			options?.abortSignal?.addEventListener("abort", () => {
+				reject(Object.assign(new Error("Request aborted"), { name: "AbortError" }));
+			});
+		}));
+
+		await expect(s3Storage.ping(10)).resolves.toEqual({ ok: false, errorCode: "timeout" });
+	});
+
+	it("writes, reads back, and deletes a probe object under the health prefix", async () => {
+		let stored: Uint8Array | undefined;
+		const { s3Storage, sent } = await loadWithSend(async (command) => {
+			if (command.constructor.name === "PutObjectCommand") {
+				stored = new Uint8Array(command.input.Body as Buffer);
+			}
+
+			if (command.constructor.name === "GetObjectCommand") {
+				return { Body: { transformToByteArray: async () => stored } };
+			}
+
+			return {};
+		});
+
+		await expect(s3Storage.writeRoundTrip(1_000)).resolves.toEqual({ ok: true });
+		expect(sent.map((command) => command.constructor.name)).toEqual([
+			"PutObjectCommand",
+			"GetObjectCommand",
+			"DeleteObjectCommand",
+			"ListObjectsV2Command",
+		]);
+
+		const keys = new Set(sent.filter((command) => command.input.Key !== undefined).map((command) => command.input.Key));
+
+		expect(keys.size).toBe(1);
+		expect(String(sent[0].input.Key)).toMatch(/^_health\/[0-9a-f-]{36}$/);
+	});
+
+	it("still deletes the probe object when the content does not match", async () => {
+		const { s3Storage, sent } = await loadWithSend(async (command) => {
+			if (command.constructor.name === "GetObjectCommand") {
+				return { Body: { transformToByteArray: async () => new Uint8Array([1, 2, 3]) } };
+			}
+
+			return {};
+		});
+
+		await expect(s3Storage.writeRoundTrip(1_000)).resolves.toEqual({ ok: false, errorCode: "content_mismatch" });
+		expect(sent.at(-1)?.constructor.name).toBe("DeleteObjectCommand");
+	});
+
+	it("sweeps probe objects orphaned by earlier timed-out round-trips", async () => {
+		const orphans = ["_health/old-1", "_health/old-2"];
+		let stored: Uint8Array | undefined;
+		const { s3Storage, sent } = await loadWithSend(async (command) => {
+			if (command.constructor.name === "PutObjectCommand") {
+				stored = new Uint8Array(command.input.Body as Buffer);
+			}
+
+			if (command.constructor.name === "GetObjectCommand") {
+				return { Body: { transformToByteArray: async () => stored } };
+			}
+
+			if (command.constructor.name === "ListObjectsV2Command") {
+				return { Contents: orphans.map((Key) => ({ Key })) };
+			}
+
+			return {};
+		});
+
+		await expect(s3Storage.writeRoundTrip(1_000)).resolves.toEqual({ ok: true });
+
+		const list = sent.find((command) => command.constructor.name === "ListObjectsV2Command");
+		const deleted = sent.filter((command) => command.constructor.name === "DeleteObjectCommand").map((command) => command.input.Key);
+
+		expect(list?.input.Prefix).toBe("_health/");
+		expect(deleted.slice(1)).toEqual(orphans);
+	});
+
+	it("still reports success when the orphan sweep fails", async () => {
+		let stored: Uint8Array | undefined;
+		const { s3Storage } = await loadWithSend(async (command) => {
+			if (command.constructor.name === "PutObjectCommand") {
+				stored = new Uint8Array(command.input.Body as Buffer);
+			}
+
+			if (command.constructor.name === "GetObjectCommand") {
+				return { Body: { transformToByteArray: async () => stored } };
+			}
+
+			if (command.constructor.name === "ListObjectsV2Command") {
+				throw s3Error("InternalError", 500);
+			}
+
+			return {};
+		});
+
+		await expect(s3Storage.writeRoundTrip(1_000)).resolves.toEqual({ ok: true });
+	});
+
+	it("does not attempt a delete when the write itself fails", async () => {
+		const { s3Storage, sent } = await loadWithSend(async () => {
+			throw s3Error("InternalError", 500);
+		});
+
+		await expect(s3Storage.writeRoundTrip(1_000)).resolves.toEqual({ ok: false, errorCode: "s3_InternalError" });
+		expect(sent.map((command) => command.constructor.name)).toEqual(["PutObjectCommand"]);
+	});
+});
