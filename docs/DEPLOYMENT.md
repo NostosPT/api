@@ -111,6 +111,42 @@ curl https://api.nostos.photos/v1/health   # liveness
 curl https://api.nostos.photos/v1/ready    # PostgreSQL + storage reachable
 ```
 
+### 6. Alert emails (Resend)
+
+1. Verify the sending domain (e.g. `nostos.photos`) in Resend.
+2. Create two sending-only API keys restricted to that domain: one for the
+   API, one for the proxy VPS watchdog, so either can be revoked alone.
+3. In `/opt/nostos/api/.env.prod` set `RESEND_API_KEY`, `ALERT_EMAIL_FROM`,
+   and optionally `ALERT_FALLBACK_RECIPIENTS`; check `MONITOR_PUBLIC_URL` and
+   `MONITOR_PUBLIC_STORAGE`. Redeploy.
+
+API alerts go to every ACTIVE ADMIN user. Without `RESEND_API_KEY` and
+`ALERT_EMAIL_FROM` monitoring still runs and records history, but only logs
+state changes (a warning at startup says so).
+
+### 7. Proxy VPS watchdog
+
+Watches the API from the proxy VPS, so a dead API, app server, or WireGuard
+link still produces an email. Needs only `sh` and `curl` (no resident
+process; one short run per minute).
+
+```bash
+# On the proxy VPS, from a checkout or copies of deploy/watchdog/:
+sudo install -m 755 deploy/watchdog/watchdog.sh /usr/local/bin/nostos-watchdog
+sudo install -m 600 deploy/watchdog/watchdog.env.example /etc/nostos-watchdog.env
+sudoedit /etc/nostos-watchdog.env          # RESEND_API_KEY, ALERT_RECIPIENTS, ...
+sudo install -m 644 deploy/watchdog/nostos-watchdog.service deploy/watchdog/nostos-watchdog.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now nostos-watchdog.timer
+
+# Verify the email configuration, then watch a few runs:
+sudo sh -c 'set -a; . /etc/nostos-watchdog.env; WATCHDOG_STATE_DIR=$(mktemp -d) /usr/local/bin/nostos-watchdog test-email'
+journalctl -u nostos-watchdog -f
+```
+
+The watchdog uses its own static `ALERT_RECIPIENTS`: it cannot read the
+API's ADMIN list, and it must work while the API is down.
+
 ## Operations
 
 All commands run on the app server from the runner's checkout (or any
@@ -141,6 +177,41 @@ $C logs backup                           # scheduled run output
 
 Set `BACKUP_HEALTHCHECK_URL` (e.g. healthchecks.io) to be alerted when a
 nightly run fails or doesn't happen.
+
+Each run is also recorded in the `BackupRun` table (started, succeeded or
+failed with `exit_<code>`), which the health monitor's BACKUP check reads.
+Recording is best effort and never fails a backup.
+
+### Health monitoring
+
+With `MONITOR_ENABLED` (default in production) the API checks, records
+(`HealthCheck`, kept `HEALTH_RETENTION_DAYS`), and alerts on:
+
+| Component | Check | Every | Degraded | Down |
+|---|---|---|---|---|
+| `DATABASE` | `SELECT 1` | 60 s | > 500 ms | error / 5 s timeout |
+| `STORAGE` | HeadBucket | 60 s | > 1 s | error / 5 s timeout |
+| `STORAGE_WRITE` | put/read/delete under `_health/` | 1 h | > 1 s | any step fails |
+| `PUBLIC_API` | `GET MONITOR_PUBLIC_URL/v1/health` | 60 s | > 2 s | non-200 / 10 s timeout |
+| `PUBLIC_API_TLS` | certificate of that host | 6 h | < 14 days left | < 3 days / invalid |
+| `PUBLIC_STORAGE` | `GET S3_PUBLIC_ENDPOINT/healthz` | 60 s | > 2 s | non-200 / 10 s timeout |
+| `PUBLIC_STORAGE_TLS` | certificate of that host | 6 h | < 14 days left | < 3 days / invalid |
+| `BACKUP` | latest `BackupRun` | 15 min | last success > 26 h | last run failed / > 50 h / none |
+
+The `PUBLIC_*` rows run only when `MONITOR_PUBLIC_URL` / `MONITOR_PUBLIC_STORAGE`
+are set. Every value above is overridable (names in `.env.example`).
+
+An email goes out after 3 consecutive worse results (DOWN or DEGRADED) and
+after 2 consecutive better ones (RECOVERED); nothing in between. Current
+state, sanitized error codes, and uptime over 24 h / 7 d / 30 d (DEGRADED
+counts as available):
+
+```bash
+curl -b "__Host-nostos.sid=<admin session>" https://api.nostos.photos/v1/system/status
+```
+
+`_health/` in the photo bucket holds only probe objects; it is excluded from
+the off-site backup.
 
 ### Restore
 
@@ -179,4 +250,13 @@ tag in `compose.prod.yml` **and** `deploy/backup/Dockerfile`, remove the
 
 * SeaweedFS runs as a single node: durability comes from the off-site backup,
   not replication (DECISIONS.md open item on SeaweedFS topology).
-* There is no seed or bootstrap command for the first ADMIN user yet.
+* There is no seed or bootstrap command for the first ADMIN user yet. Until
+  one exists, API alerts reach only `ALERT_FALLBACK_RECIPIENTS`.
+* Health monitoring assumes one API replica: several would each probe and
+  send their own alerts.
+* Monitoring state lives in memory: restarting the API during an outage sends
+  the DOWN email again, and check results buffered while PostgreSQL was down
+  are lost.
+* If the app server and the proxy VPS are down at the same time, nothing
+  alerts. An external dead-man's switch (e.g. healthchecks.io pinged by the
+  watchdog) would close that gap.
