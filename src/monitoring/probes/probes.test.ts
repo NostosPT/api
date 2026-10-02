@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { errorCodeOf } from "../errors.js";
+import { createBackupProbe, type BackupRunSummary, type BackupState } from "./backup.js";
 import { createDatabaseProbe } from "./database.js";
 import { createHttpProbe } from "./http.js";
 import { createStorageProbe } from "./storage.js";
@@ -268,5 +269,63 @@ describe("createTlsProbe", () => {
 		};
 
 		await expect(createTlsProbe({ ...base, inspect })()).resolves.toMatchObject({ status: "DOWN", errorCode: "econnrefused" });
+	});
+});
+
+describe("createBackupProbe", () => {
+	const HOUR = 60 * 60 * 1000;
+	const base = { degradedHours: 26, downHours: 50, clock };
+
+	function run(status: "SUCCEEDED" | "FAILED", hoursAgo: number, errorCode: string | null = null): BackupRunSummary {
+		return { status, finishedAt: new Date(NOW.getTime() - hoursAgo * HOUR), errorCode };
+	}
+
+	function state(latestFinished: BackupRunSummary | null, latestSucceeded: BackupRunSummary | null): () => Promise<BackupState> {
+		return async () => ({ latestFinished, latestSucceeded });
+	}
+
+	it.each([
+		[2, "UP", null],
+		[26, "UP", null],
+		[27, "DEGRADED", "stale_27h"],
+		[50, "DEGRADED", "stale_50h"],
+		[51, "DOWN", "stale_51h"],
+	])("classifies a success %i hours ago as %s", async (hoursAgo, status, errorCode) => {
+		const success = run("SUCCEEDED", hoursAgo);
+
+		await expect(createBackupProbe({ ...base, load: state(success, success) })()).resolves.toEqual({
+			component: "BACKUP",
+			status,
+			latencyMs: null,
+			errorCode,
+			checkedAt: NOW,
+		});
+	});
+
+	it("reports DOWN when the latest run failed, even after a recent success", async () => {
+		const probe = createBackupProbe({ ...base, load: state(run("FAILED", 1, "exit_1"), run("SUCCEEDED", 25)) });
+
+		await expect(probe()).resolves.toMatchObject({ status: "DOWN", errorCode: "backup_exit_1" });
+	});
+
+	it("sanitizes the stored error code", async () => {
+		const probe = createBackupProbe({ ...base, load: state(run("FAILED", 1, "exit 1; DROP TABLE"), null) });
+
+		await expect(probe()).resolves.toMatchObject({ status: "DOWN", errorCode: "backup_exit1droptable" });
+	});
+
+	it("reports DOWN when no backup has ever succeeded", async () => {
+		await expect(createBackupProbe({ ...base, load: state(null, null) })()).resolves.toMatchObject({ status: "DOWN", errorCode: "no_backup" });
+	});
+
+	it("skips the run when the database cannot be read", async () => {
+		const probe = createBackupProbe({
+			...base,
+			load: async () => {
+				throw new Error("database down");
+			},
+		});
+
+		await expect(probe()).resolves.toBeNull();
 	});
 });
