@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { defineConfig, env } from "prisma/config";
 
 // Prisma 7 connection config. Migrate reads DATABASE_URL from here;

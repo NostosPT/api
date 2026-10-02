@@ -39,11 +39,16 @@ Install dependencies:
 pnpm install
 ```
 
-Create the environment configuration:
+Create the environment configuration and start local PostgreSQL + S3 storage (Docker):
 
 ```bash
 cp .env.example .env
+docker compose up -d
+pnpm exec prisma migrate deploy
 ```
+
+Production deployment (Docker Compose, backups, proxy setup) is described in
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 Start the development server:
 

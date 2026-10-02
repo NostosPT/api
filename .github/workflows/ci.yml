@@ -29,6 +29,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Prisma 7 does not generate the client on install. prisma.config.ts
+      # resolves DATABASE_URL eagerly; generate never connects, so a
+      # placeholder is enough (same as the Dockerfile build stage).
+      - name: Generate Prisma client
+        run: pnpm exec prisma generate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
       - name: TypeScript check
         run: pnpm typecheck
 

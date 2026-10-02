@@ -1,0 +1,176 @@
+# Production stack: API + PostgreSQL + SeaweedFS (S3) + off-site backups.
+#
+#   docker compose -f compose.prod.yml --env-file /opt/nostos/api/.env.prod up -d --build --wait
+#
+# Normally run by .github/workflows/deploy.yml on the self-hosted runner.
+# Every value comes from the env file (template: .env.prod.example). Only the
+# API and the SeaweedFS S3 gateway are published, and only on BIND_ADDRESS
+# (the WireGuard address the Caddy proxy connects to). See docs/DEPLOYMENT.md.
+#
+# The fixed project name keeps volumes stable no matter where the repo is
+# checked out (the runner workspace).
+name: nostos-api
+
+x-s3-credentials: &s3-credentials
+  RCLONE_CONFIG: /dev/null
+  RCLONE_CONFIG_SEAWEEDFS_TYPE: s3
+  RCLONE_CONFIG_SEAWEEDFS_PROVIDER: SeaweedFS
+  RCLONE_CONFIG_SEAWEEDFS_ENDPOINT: http://seaweedfs:8333
+  RCLONE_CONFIG_SEAWEEDFS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
+  RCLONE_CONFIG_SEAWEEDFS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
+
+services:
+  postgres:
+    image: postgres:18.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nostos}
+      POSTGRES_USER: ${POSTGRES_USER:-nostos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [internal]
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    restart: unless-stopped
+    command:
+      - server
+      - -s3
+      - -s3.port=8333
+      # Browser origins allowed to PUT/GET via presigned URLs (frontend).
+      - -s3.allowedOrigins=${STORAGE_CORS_ORIGINS:?STORAGE_CORS_ORIGINS is required}
+    environment:
+      # SeaweedFS creates its admin S3 identity from these; anonymous access is denied.
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}
+    ports:
+      - "${BIND_ADDRESS:?BIND_ADDRESS is required}:${STORAGE_PORT:-8333}:8333"
+    volumes:
+      - seaweedfs-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [internal]
+
+  # One-shot: creates the bucket if missing, then exits.
+  storage-init:
+    image: rclone/rclone:1.75.1
+    restart: "no"
+    command: ["mkdir", "seaweedfs:${S3_BUCKET:-nostos}"]
+    environment:
+      <<: *s3-credentials
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    networks: [internal]
+
+  # One-shot: applies pending Prisma migrations before the API starts.
+  migrate:
+    build:
+      context: .
+      target: migrate
+    image: nostos-api-migrate:latest
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nostos}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-nostos}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  api:
+    build:
+      context: .
+      target: runtime
+    image: nostos-api:latest
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nostos}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-nostos}
+      COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET is required}
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      DOCS_ENABLED: ${DOCS_ENABLED:-}
+      SESSION_ABSOLUTE_SECONDS: ${SESSION_ABSOLUTE_SECONDS:-}
+      SESSION_IDLE_SECONDS: ${SESSION_IDLE_SECONDS:-}
+      SESSION_MAX_CONCURRENT: ${SESSION_MAX_CONCURRENT:-}
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-}
+      SITE_COPYRIGHT: ${SITE_COPYRIGHT:-}
+      STORAGE_PROVIDER: s3
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-nostos}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?S3_PUBLIC_ENDPOINT is required}
+      S3_FORCE_PATH_STYLE: "true"
+    ports:
+      - "${BIND_ADDRESS:?BIND_ADDRESS is required}:${API_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      storage-init:
+        condition: service_completed_successfully
+    networks: [internal]
+
+  # Scheduled off-site backups (PostgreSQL dump + photo bucket sync).
+  backup:
+    build:
+      context: deploy/backup
+    image: nostos-api-backup:latest
+    restart: unless-stopped
+    environment:
+      <<: *s3-credentials
+      BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-0 3 * * *}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      BACKUP_PREFIX: ${BACKUP_PREFIX:-nostos}
+      BACKUP_HEALTHCHECK_URL: ${BACKUP_HEALTHCHECK_URL:-}
+      BACKUP_ENCRYPTION_PASSWORD: ${BACKUP_ENCRYPTION_PASSWORD:-}
+      BACKUP_ENCRYPTION_SALT: ${BACKUP_ENCRYPTION_SALT:-}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:?BACKUP_S3_BUCKET is required}
+      RCLONE_CONFIG_OFFSITE_TYPE: s3
+      RCLONE_CONFIG_OFFSITE_PROVIDER: ${BACKUP_S3_PROVIDER:-Other}
+      RCLONE_CONFIG_OFFSITE_ENDPOINT: ${BACKUP_S3_ENDPOINT:?BACKUP_S3_ENDPOINT is required}
+      RCLONE_CONFIG_OFFSITE_REGION: ${BACKUP_S3_REGION:-us-east-1}
+      RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:?BACKUP_S3_ACCESS_KEY_ID is required}
+      RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:?BACKUP_S3_SECRET_ACCESS_KEY is required}
+      RCLONE_CONFIG_OFFSITE_NO_CHECK_BUCKET: "true"
+      S3_BUCKET: ${S3_BUCKET:-nostos}
+      PGHOST: postgres
+      PGDATABASE: ${POSTGRES_DB:-nostos}
+      PGUSER: ${POSTGRES_USER:-nostos}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    networks: [internal]
+
+networks:
+  internal:
+
+volumes:
+  postgres-data:
+  seaweedfs-data:
