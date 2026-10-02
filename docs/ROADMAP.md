@@ -43,6 +43,9 @@ Favorites, minimal Purchase, AuditLog.
    strictly rate-limited.
 7. **Hardening** — negative/security tests per domain, rate limits, IDOR audit,
    OpenAPI docs.
+8. **Health monitoring** — scheduled dependency/public/TLS/backup probes,
+   check history with uptime, ADMIN status endpoint, debounced alert emails
+   to ADMINs via Resend (outbound only), proxy VPS watchdog.
 
 ## Phase 2 — Financial + communications (deferred, not forgotten)
 
@@ -52,7 +55,8 @@ Favorites, minimal Purchase, AuditLog.
   Depends on: Photos, Clients, Documents.
 * **Payments / financial integrations** — provider webhooks, reconciliation.
 * **Email / Resend** — send via API, inbound + delivery webhooks, thread
-  matching. Depends on: Clients.
+  matching. Depends on: Clients. (Outbound system alerts already exist,
+  Phase 1 item 8; reuse its `EmailPort`.)
 * **Watermark processing** — rendition worker (sharp) reading the same spec as
   the dashboard preview; originals never watermarked.
 

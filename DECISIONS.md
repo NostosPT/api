@@ -155,6 +155,30 @@ decision, the concrete reason, and what was rejected. Open items are marked
 * **Health: liveness + readiness.** `GET /v1/health` stays (liveness, no
   details); demo `POST /v1/health` is removed; `GET /v1/ready` checks
   PostgreSQL (+ storage reachability) and returns 200/503 without internals.
+* **Health monitoring: in-API checks + proxy VPS watchdog (mutual watch).**
+  The API runs scheduled probes (DATABASE, STORAGE, STORAGE_WRITE,
+  PUBLIC_API, PUBLIC_API_TLS, PUBLIC_STORAGE, PUBLIC_STORAGE_TLS, BACKUP),
+  classifies each as `UP | DEGRADED | DOWN`, stores every result in
+  PostgreSQL (pruned after `HEALTH_RETENTION_DAYS`, buffered in memory while
+  the DB is down), and serves `GET /v1/system/status` (ADMIN only, uptime
+  counts `DOWN` only). A shell-script watchdog on the proxy VPS (1 GB RAM)
+  polls `/v1/ready` through Caddy, so a dead API or server still alerts; the
+  API's public probes detect a dead proxy. Single API replica assumed
+  (several would duplicate alerts). Rejected: in-API only (blind to its own
+  death), Uptime Kuma (too heavy for the proxy VPS), separate monitor
+  container (same host, little gained).
+* **Alert emails: outbound Resend pulled forward from Phase 2, system alerts
+  only.** Plain `fetch` behind an `EmailPort` (no SDK dependency). Debounced:
+  email after 3 consecutive results in a new state, recovery after 2 OKs.
+  Recipients are ACTIVE ADMIN users, cached in memory for DB outages, with
+  `ALERT_FALLBACK_RECIPIENTS` used only when no cache exists; the watchdog
+  uses its own static list. Disabled until `RESEND_API_KEY` and
+  `ALERT_EMAIL_FROM` are set. Inbound mail, webhooks, and client email stay
+  Phase 2.
+* **Backup results live in PostgreSQL.** `backup.sh` records each run in
+  `BackupRun` via `psql` so the API can judge backup freshness. Rejected:
+  marker object in the photo bucket (mixes system data with photos), shared
+  volume file (filesystem coupling between containers).
 * **Tests: Vitest + Fastify `inject()`.** No Supertest without a concrete
   requirement.
 * **Public service catalogue is public (option A, confirmed).** `GET /v1/services`
