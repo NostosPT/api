@@ -1,0 +1,32 @@
+# One watchdog check (deploy/watchdog/watchdog.sh), started by the timer.
+# Install: see docs/DEPLOYMENT.md "Proxy VPS watchdog".
+[Unit]
+Description=Nostos API watchdog check
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nostos-watchdog
+# Read by systemd as root before privileges are dropped: keep it 600 root:root.
+EnvironmentFile=/etc/nostos-watchdog.env
+Environment=WATCHDOG_STATE_DIR=/var/lib/nostos-watchdog
+StateDirectory=nostos-watchdog
+StateDirectoryMode=0700
+DynamicUser=yes
+# Sandboxing: the script only needs the network and its state directory.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+MemoryMax=64M
+TimeoutStartSec=60

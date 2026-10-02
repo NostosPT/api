@@ -1,0 +1,12 @@
+# Runs the Nostos API watchdog once a minute. A run still in progress delays
+# the next one (oneshot units never overlap).
+[Unit]
+Description=Run the Nostos API watchdog every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
