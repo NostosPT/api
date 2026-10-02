@@ -1,0 +1,67 @@
+# Local development infrastructure: PostgreSQL + SeaweedFS (S3-compatible).
+#
+#   cp .env.example .env
+#   docker compose up -d
+#   pnpm exec prisma migrate deploy
+#   pnpm dev
+#
+# Ports bind to 127.0.0.1 only. Credentials are read from .env (Compose loads
+# it automatically) with defaults matching .env.example. Production uses
+# compose.prod.yml — see docs/DEPLOYMENT.md.
+name: nostos-api-dev
+
+services:
+  postgres:
+    image: postgres:18.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nostos
+      POSTGRES_USER: nostos
+      POSTGRES_PASSWORD: nostos
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nostos -d nostos"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    restart: unless-stopped
+    command: ["server", "-s3", "-s3.port=8333", "-s3.allowedOrigins=*"]
+    environment:
+      # SeaweedFS creates an admin S3 identity from these.
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-nostos-dev}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-nostos-dev-secret}
+    ports:
+      - "127.0.0.1:${S3_PORT:-8333}:8333"
+    volumes:
+      - seaweedfs-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # One-shot: creates the bucket (idempotent), then exits.
+  storage-init:
+    image: rclone/rclone:1.75.1
+    restart: "no"
+    command: ["mkdir", "seaweedfs:${S3_BUCKET:-nostos}"]
+    environment:
+      RCLONE_CONFIG: /dev/null
+      RCLONE_CONFIG_SEAWEEDFS_TYPE: s3
+      RCLONE_CONFIG_SEAWEEDFS_PROVIDER: SeaweedFS
+      RCLONE_CONFIG_SEAWEEDFS_ENDPOINT: http://seaweedfs:8333
+      RCLONE_CONFIG_SEAWEEDFS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-nostos-dev}
+      RCLONE_CONFIG_SEAWEEDFS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-nostos-dev-secret}
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  seaweedfs-data:

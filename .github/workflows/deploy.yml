@@ -1,0 +1,63 @@
+name: Deploy
+
+# Deploys main to the production server through the self-hosted runner, after
+# CI passes. Builds images on the server and applies migrations before the API
+# restarts (compose.prod.yml "migrate" service). See docs/DEPLOYMENT.md.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never run two deploys at once; never cancel one mid-migration.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 30
+
+    env:
+      # Server-side env file (never in git). Override with the repository
+      # variable DEPLOY_ENV_FILE.
+      ENV_FILE: ${{ vars.DEPLOY_ENV_FILE || '/opt/nostos/api/.env.prod' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Check environment file
+        run: |
+          if [ ! -r "$ENV_FILE" ]; then
+            echo "::error::Missing $ENV_FILE on the server. Create it with deploy/init-env.sh (see docs/DEPLOYMENT.md)."
+            exit 1
+          fi
+          docker compose -f compose.prod.yml --env-file "$ENV_FILE" config --quiet
+
+      - name: Build images
+        run: docker compose -f compose.prod.yml --env-file "$ENV_FILE" build
+
+      - name: Deploy
+        run: docker compose -f compose.prod.yml --env-file "$ENV_FILE" up -d --remove-orphans --wait --wait-timeout 300
+
+      - name: Show status
+        if: always()
+        run: docker compose -f compose.prod.yml --env-file "$ENV_FILE" ps -a
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose -f compose.prod.yml --env-file "$ENV_FILE" logs --tail 100 migrate storage-init api
+
+      - name: Prune dangling images
+        if: success()
+        run: docker image prune -f

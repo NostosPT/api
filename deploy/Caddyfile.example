@@ -1,0 +1,18 @@
+# Caddy on the proxy VPS. Upstreams are the app server's WireGuard address
+# (BIND_ADDRESS) and ports (API_PORT / STORAGE_PORT) from the env file.
+
+api.nostos.photos {
+	reverse_proxy 10.0.0.2:3000
+}
+
+# S3 gateway for presigned uploads/downloads (S3_PUBLIC_ENDPOINT).
+# Host must reach SeaweedFS unchanged (Caddy's default): presigned URLs are
+# signed for this hostname. Do not rewrite paths or strip query strings.
+storage.nostos.photos {
+	request_body {
+		# UPLOAD_MAX_BYTES (50 MB) plus headroom.
+		max_size 60MB
+	}
+
+	reverse_proxy 10.0.0.2:8333
+}
