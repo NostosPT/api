@@ -1,9 +1,17 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { Readable } from "node:stream";
-import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+	DeleteObjectCommand,
+	GetObjectCommand,
+	HeadBucketCommand,
+	HeadObjectCommand,
+	PutObjectCommand,
+	S3Client,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "../config/index.js";
-import type { PresignPutOptions, StoragePort } from "./types.js";
+import { healthProbeKey } from "./keys.js";
+import type { PresignPutOptions, StoragePort, StorageProbeResult } from "./types.js";
 
 const PUT_URL_TTL_SECONDS = 15 * 60;
 const GET_URL_TTL_SECONDS = 5 * 60;
@@ -66,6 +74,55 @@ function getPresignClient(): S3Client | null {
 	presignClient ??= createClient(publicEndpoint);
 
 	return presignClient;
+}
+
+const PROBE_BODY_BYTES = 16;
+
+// Maps SDK/network failures to a short code that is safe to store and show
+// to admins: no hostnames, keys, or provider messages.
+export function storageErrorCode(error: unknown): string {
+	if (typeof error !== "object" || error === null) {
+		return "error";
+	}
+
+	const { name, code, $metadata } = error as {
+		name?: unknown;
+		code?: unknown;
+		$metadata?: { httpStatusCode?: unknown };
+	};
+
+	if (name === "AbortError" || name === "TimeoutError") {
+		return "timeout";
+	}
+
+	if (typeof code === "string" && /^E[A-Z]+$/.test(code)) {
+		return code.toLowerCase();
+	}
+
+	if (typeof name === "string" && $metadata?.httpStatusCode !== undefined) {
+		const safeName = name.replace(/[^A-Za-z0-9]/g, "").slice(0, 48);
+
+		// HEAD responses carry no error body, so the SDK may only know the
+		// status (name "Unknown"): the status is the more useful code then.
+		return safeName && safeName !== "Unknown" ? `s3_${safeName}` : `http_${String($metadata.httpStatusCode)}`;
+	}
+
+	return "error";
+}
+
+async function probe(run: (s3: S3Client, signal: AbortSignal) => Promise<StorageProbeResult>, timeoutMs: number): Promise<StorageProbeResult | null> {
+	const s3 = getClient();
+
+	if (s3 === null) {
+		return null;
+	}
+
+	try {
+		return await run(s3, AbortSignal.timeout(timeoutMs));
+	}
+	catch (error) {
+		return { ok: false, errorCode: storageErrorCode(error) };
+	}
 }
 
 export const s3Storage: StoragePort = {
@@ -162,5 +219,42 @@ export const s3Storage: StoragePort = {
 		catch {
 			return null;
 		}
+	},
+
+	async ping(timeoutMs: number): Promise<StorageProbeResult | null> {
+		return probe(async (s3, abortSignal) => {
+			await s3.send(new HeadBucketCommand({ Bucket: bucket() }), { abortSignal });
+
+			return { ok: true };
+		}, timeoutMs);
+	},
+
+	async writeRoundTrip(timeoutMs: number): Promise<StorageProbeResult | null> {
+		return probe(async (s3, abortSignal) => {
+			const key = healthProbeKey();
+			const body = randomBytes(PROBE_BODY_BYTES);
+
+			await s3.send(new PutObjectCommand({ Bucket: bucket(), Key: key, Body: body }), { abortSignal });
+
+			// The object exists from here on: always try to remove it, even
+			// when the read fails or timed out (own signal), so probes never
+			// accumulate in the bucket.
+			try {
+				const result = await s3.send(new GetObjectCommand({ Bucket: bucket(), Key: key }), { abortSignal });
+				const read = await result.Body?.transformToByteArray();
+
+				if (read === undefined || !body.equals(read)) {
+					return { ok: false, errorCode: "content_mismatch" };
+				}
+			}
+			finally {
+				await s3.send(
+					new DeleteObjectCommand({ Bucket: bucket(), Key: key }),
+					{ abortSignal: AbortSignal.timeout(timeoutMs) },
+				);
+			}
+
+			return { ok: true };
+		}, timeoutMs);
 	},
 };
