@@ -188,9 +188,10 @@ describe("s3Storage health probes", () => {
 			"PutObjectCommand",
 			"GetObjectCommand",
 			"DeleteObjectCommand",
+			"ListObjectsV2Command",
 		]);
 
-		const keys = new Set(sent.map((command) => command.input.Key));
+		const keys = new Set(sent.filter((command) => command.input.Key !== undefined).map((command) => command.input.Key));
 
 		expect(keys.size).toBe(1);
 		expect(String(sent[0].input.Key)).toMatch(/^_health\/[0-9a-f-]{36}$/);
@@ -207,6 +208,55 @@ describe("s3Storage health probes", () => {
 
 		await expect(s3Storage.writeRoundTrip(1_000)).resolves.toEqual({ ok: false, errorCode: "content_mismatch" });
 		expect(sent.at(-1)?.constructor.name).toBe("DeleteObjectCommand");
+	});
+
+	it("sweeps probe objects orphaned by earlier timed-out round-trips", async () => {
+		const orphans = ["_health/old-1", "_health/old-2"];
+		let stored: Uint8Array | undefined;
+		const { s3Storage, sent } = await loadWithSend(async (command) => {
+			if (command.constructor.name === "PutObjectCommand") {
+				stored = new Uint8Array(command.input.Body as Buffer);
+			}
+
+			if (command.constructor.name === "GetObjectCommand") {
+				return { Body: { transformToByteArray: async () => stored } };
+			}
+
+			if (command.constructor.name === "ListObjectsV2Command") {
+				return { Contents: orphans.map((Key) => ({ Key })) };
+			}
+
+			return {};
+		});
+
+		await expect(s3Storage.writeRoundTrip(1_000)).resolves.toEqual({ ok: true });
+
+		const list = sent.find((command) => command.constructor.name === "ListObjectsV2Command");
+		const deleted = sent.filter((command) => command.constructor.name === "DeleteObjectCommand").map((command) => command.input.Key);
+
+		expect(list?.input.Prefix).toBe("_health/");
+		expect(deleted.slice(1)).toEqual(orphans);
+	});
+
+	it("still reports success when the orphan sweep fails", async () => {
+		let stored: Uint8Array | undefined;
+		const { s3Storage } = await loadWithSend(async (command) => {
+			if (command.constructor.name === "PutObjectCommand") {
+				stored = new Uint8Array(command.input.Body as Buffer);
+			}
+
+			if (command.constructor.name === "GetObjectCommand") {
+				return { Body: { transformToByteArray: async () => stored } };
+			}
+
+			if (command.constructor.name === "ListObjectsV2Command") {
+				throw s3Error("InternalError", 500);
+			}
+
+			return {};
+		});
+
+		await expect(s3Storage.writeRoundTrip(1_000)).resolves.toEqual({ ok: true });
 	});
 
 	it("does not attempt a delete when the write itself fails", async () => {

@@ -5,12 +5,13 @@ import {
 	GetObjectCommand,
 	HeadBucketCommand,
 	HeadObjectCommand,
+	ListObjectsV2Command,
 	PutObjectCommand,
 	S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "../config/index.js";
-import { healthProbeKey } from "./keys.js";
+import { HEALTH_PROBE_PREFIX, healthProbeKey } from "./keys.js";
 import type { PresignPutOptions, StoragePort, StorageProbeResult } from "./types.js";
 
 const PUT_URL_TTL_SECONDS = 15 * 60;
@@ -77,6 +78,7 @@ function getPresignClient(): S3Client | null {
 }
 
 const PROBE_BODY_BYTES = 16;
+const ORPHAN_SWEEP_LIMIT = 100;
 
 // Maps SDK/network failures to a short code that is safe to store and show
 // to admins: no hostnames, keys, or provider messages.
@@ -254,7 +256,34 @@ export const s3Storage: StoragePort = {
 				);
 			}
 
+			await sweepOrphanedProbes(s3, timeoutMs);
+
 			return { ok: true };
 		}, timeoutMs);
 	},
 };
+
+// A round-trip that times out mid-way can still complete server-side after
+// we gave up (e.g. a stalled PUT), leaving its object behind. Each healthy
+// round-trip removes such leftovers. Probes never overlap (one scheduler,
+// one replica), so everything under the prefix is stale here. Best effort.
+async function sweepOrphanedProbes(s3: S3Client, timeoutMs: number): Promise<void> {
+	try {
+		const listed = await s3.send(
+			new ListObjectsV2Command({ Bucket: bucket(), Prefix: `${HEALTH_PROBE_PREFIX}/`, MaxKeys: ORPHAN_SWEEP_LIMIT }),
+			{ abortSignal: AbortSignal.timeout(timeoutMs) },
+		);
+
+		for (const object of listed.Contents ?? []) {
+			if (object.Key?.startsWith(`${HEALTH_PROBE_PREFIX}/`)) {
+				await s3.send(
+					new DeleteObjectCommand({ Bucket: bucket(), Key: object.Key }),
+					{ abortSignal: AbortSignal.timeout(timeoutMs) },
+				);
+			}
+		}
+	}
+	catch {
+		// Leftovers are retried by the next healthy round-trip.
+	}
+}
