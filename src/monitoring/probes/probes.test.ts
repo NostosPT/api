@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { errorCodeOf } from "../errors.js";
 import { createDatabaseProbe } from "./database.js";
+import { createHttpProbe } from "./http.js";
 import { createStorageProbe } from "./storage.js";
+import { createTlsProbe, type CertificateInfo, type InspectCertificate } from "./tls.js";
 
 const NOW = new Date("2026-10-02T12:00:00.000Z");
 const clock = (): Date => NOW;
@@ -140,5 +142,131 @@ describe("createStorageProbe", () => {
 			errorCode: "s3_AccessDenied",
 			checkedAt: NOW,
 		});
+	});
+});
+
+describe("errorCodeOf with fetch failures", () => {
+	it("unwraps fetch's cause", () => {
+		const error = Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("getaddrinfo ENOTFOUND api.example.com"), { code: "ENOTFOUND" }) });
+
+		expect(errorCodeOf(error)).toBe("enotfound");
+	});
+
+	it("keeps TLS verification codes", () => {
+		const error = Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("certificate has expired"), { code: "CERT_HAS_EXPIRED" }) });
+
+		expect(errorCodeOf(error)).toBe("cert_has_expired");
+	});
+});
+
+function fetchReturning(respond: () => Response | Promise<Response>): { fetchImpl: typeof fetch; calls: { url: string; init: RequestInit }[] } {
+	const calls: { url: string; init: RequestInit }[] = [];
+	const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+		calls.push({ url: String(url), init: init ?? {} });
+
+		return respond();
+	}) as unknown as typeof fetch;
+
+	return { fetchImpl, calls };
+}
+
+describe("createHttpProbe", () => {
+	const base = { component: "PUBLIC_API" as const, url: "https://api.example.com/v1/health", timeoutMs: 1_000, slowMs: 500, clock };
+
+	it("reports UP for a direct 200 without following redirects", async () => {
+		const { fetchImpl, calls } = fetchReturning(() => new Response("{\"status\":\"ok\"}", { status: 200 }));
+
+		await expect(createHttpProbe({ ...base, fetchImpl })()).resolves.toMatchObject({ component: "PUBLIC_API", status: "UP", errorCode: null });
+		expect(calls[0].url).toBe("https://api.example.com/v1/health");
+		expect(calls[0].init.redirect).toBe("manual");
+	});
+
+	it("reports DEGRADED when the response is slow", async () => {
+		const { fetchImpl } = fetchReturning(async () => {
+			await delay(30);
+
+			return new Response("ok", { status: 200 });
+		});
+
+		await expect(createHttpProbe({ ...base, slowMs: 5, fetchImpl })()).resolves.toMatchObject({ status: "DEGRADED" });
+	});
+
+	it.each([502, 503, 301, 404])("reports DOWN for HTTP %i", async (status) => {
+		const { fetchImpl } = fetchReturning(() => new Response(null, { status }));
+
+		await expect(createHttpProbe({ ...base, fetchImpl })()).resolves.toMatchObject({ status: "DOWN", errorCode: `http_${status}` });
+	});
+
+	it("reports DOWN with the network code when the request fails", async () => {
+		const fetchImpl = (async () => {
+			throw Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) });
+		}) as unknown as typeof fetch;
+
+		await expect(createHttpProbe({ ...base, fetchImpl })()).resolves.toEqual({
+			component: "PUBLIC_API",
+			status: "DOWN",
+			latencyMs: null,
+			errorCode: "econnrefused",
+			checkedAt: NOW,
+		});
+	});
+
+	it("reports a timeout when the server does not answer in time", async () => {
+		const fetchImpl = ((_url: string, init: RequestInit) => new Promise((_, reject) => {
+			init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+		})) as unknown as typeof fetch;
+
+		await expect(createHttpProbe({ ...base, timeoutMs: 10, fetchImpl })()).resolves.toMatchObject({ status: "DOWN", errorCode: "timeout" });
+	});
+});
+
+describe("createTlsProbe", () => {
+	const DAY = 24 * 60 * 60 * 1000;
+	const base = { component: "PUBLIC_API_TLS" as const, url: "https://api.example.com", timeoutMs: 1_000, degradedDays: 14, downDays: 3, clock };
+
+	function certificate(daysLeft: number, overrides: Partial<CertificateInfo> = {}): InspectCertificate {
+		return async () => ({ authorized: true, authorizationError: null, validTo: new Date(NOW.getTime() + daysLeft * DAY), ...overrides });
+	}
+
+	it("skips plain-http URLs", async () => {
+		await expect(createTlsProbe({ ...base, url: "http://api.example.com", inspect: certificate(90) })()).resolves.toBeNull();
+	});
+
+	it("inspects the URL's host on the default or explicit port", async () => {
+		const targets: string[] = [];
+		const inspect: InspectCertificate = async (host, port) => {
+			targets.push(`${host}:${port}`);
+
+			return certificate(90)(host, port, 0);
+		};
+
+		await createTlsProbe({ ...base, inspect })();
+		await createTlsProbe({ ...base, url: "https://storage.example.com:8443", inspect })();
+
+		expect(targets).toEqual(["api.example.com:443", "storage.example.com:8443"]);
+	});
+
+	it.each([
+		[90, "UP", null],
+		[14, "UP", null],
+		[13, "DEGRADED", "expires_in_13d"],
+		[3, "DEGRADED", "expires_in_3d"],
+		[2, "DOWN", "expires_in_2d"],
+	])("classifies %i days left as %s", async (daysLeft, status, errorCode) => {
+		await expect(createTlsProbe({ ...base, inspect: certificate(daysLeft) })()).resolves.toMatchObject({ status, errorCode });
+	});
+
+	it("reports DOWN with the verification code for an untrusted certificate", async () => {
+		const inspect = certificate(-1, { authorized: false, authorizationError: "CERT_HAS_EXPIRED" });
+
+		await expect(createTlsProbe({ ...base, inspect })()).resolves.toMatchObject({ status: "DOWN", errorCode: "cert_has_expired" });
+	});
+
+	it("reports DOWN when the handshake fails", async () => {
+		const inspect: InspectCertificate = async () => {
+			throw Object.assign(new Error("connect ECONNREFUSED 1.2.3.4:443"), { code: "ECONNREFUSED" });
+		};
+
+		await expect(createTlsProbe({ ...base, inspect })()).resolves.toMatchObject({ status: "DOWN", errorCode: "econnrefused" });
 	});
 });
