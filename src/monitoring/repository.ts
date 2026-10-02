@@ -1,7 +1,7 @@
 import { prisma } from "../db/prisma.js";
 import type { BackupRunSummary, BackupState } from "./probes/backup.js";
 import type { PruneCounts } from "./retention.js";
-import type { CheckResult } from "./types.js";
+import type { CheckResult, HealthComponent, HealthStatus } from "./types.js";
 
 // Data access for health monitoring. The only module here that touches Prisma.
 
@@ -74,4 +74,45 @@ export async function pruneHealthHistory(cutoff: Date): Promise<PruneCounts> {
 	]);
 
 	return { checks: checks.count, backupRuns: backupRuns.count };
+}
+
+// --- Status reads (GET /v1/system/status) ---------------------------------
+
+export async function loadLatestChecks(components: HealthComponent[]): Promise<CheckResult[]> {
+	const rows = await Promise.all(components.map((component) => prisma.healthCheck.findFirst({
+		where: { component },
+		orderBy: { checkedAt: "desc" },
+		select: { component: true, status: true, latencyMs: true, errorCode: true, checkedAt: true },
+	})));
+
+	return rows.filter((row) => row !== null);
+}
+
+export interface StatusCount {
+	component: HealthComponent;
+	status: HealthStatus;
+	count: number;
+}
+
+export async function countChecksSince(since: Date): Promise<StatusCount[]> {
+	const groups = await prisma.healthCheck.groupBy({
+		by: ["component", "status"],
+		where: { checkedAt: { gte: since } },
+		_count: { _all: true },
+	});
+
+	return groups.map((group) => ({ component: group.component, status: group.status, count: group._count._all }));
+}
+
+export interface LatestBackupRun {
+	status: "RUNNING" | "SUCCEEDED" | "FAILED";
+	startedAt: Date;
+	finishedAt: Date | null;
+}
+
+export async function loadLatestBackupRun(): Promise<LatestBackupRun | null> {
+	return prisma.backupRun.findFirst({
+		orderBy: { startedAt: "desc" },
+		select: { status: true, startedAt: true, finishedAt: true },
+	});
 }
