@@ -86,8 +86,10 @@ log "pruning database dumps older than ${BACKUP_RETENTION_DAYS} days"
 rclone delete --min-age "${BACKUP_RETENTION_DAYS}d" "$(target postgres)"
 
 log "syncing photo bucket ${S3_BUCKET}"
+# _health/ holds the API's short-lived storage probe objects, never photos.
 rclone sync "$SOURCE" "$(target photos)" \
 	--backup-dir "$(target "photos-deleted/${stamp}")" \
+	--exclude "_health/**" \
 	--fast-list \
 	--transfers 8
 
