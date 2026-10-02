@@ -11,7 +11,8 @@ import { createStorageProbe } from "./probes/storage.js";
 import { createTlsProbe, type InspectCertificate } from "./probes/tls.js";
 import { RecipientCache, RECIPIENT_REFRESH_MS } from "./recipients.js";
 import { CheckRecorder } from "./recorder.js";
-import { insertHealthChecks, listActiveAdminEmails, loadBackupState, pingDatabase } from "./repository.js";
+import { insertHealthChecks, listActiveAdminEmails, loadBackupState, pingDatabase, pruneHealthHistory } from "./repository.js";
+import { createPruner, PRUNE_INTERVAL_MS } from "./retention.js";
 import { Scheduler } from "./scheduler.js";
 import { StateTracker, type Transition } from "./stateTracker.js";
 import type { CheckResult, HealthComponent, Probe } from "./types.js";
@@ -177,6 +178,11 @@ export function startMonitoring(): MonitorHandle | null {
 
 	// Keep the recipient cache warm so it is usable during a database outage.
 	scheduler.every("alert-recipients", RECIPIENT_REFRESH_MS, () => recipients.refresh());
+
+	scheduler.every("prune-history", PRUNE_INTERVAL_MS, createPruner({
+		retentionDays: monitoring.retentionDays,
+		prune: pruneHealthHistory,
+	}));
 
 	for (const group of groups) {
 		scheduler.every(`probe:${group.name}`, group.intervalSeconds * 1000, async () => {

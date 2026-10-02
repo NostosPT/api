@@ -1,5 +1,6 @@
 import { prisma } from "../db/prisma.js";
 import type { BackupRunSummary, BackupState } from "./probes/backup.js";
+import type { PruneCounts } from "./retention.js";
 import type { CheckResult } from "./types.js";
 
 // Data access for health monitoring. The only module here that touches Prisma.
@@ -54,4 +55,23 @@ export async function loadBackupState(): Promise<BackupState> {
 	]);
 
 	return { latestFinished: toSummary(latestFinished), latestSucceeded: toSummary(latestSucceeded) };
+}
+
+// The latest successful backup run is always kept, so its age stays known
+// even when backups have been failing for longer than the retention window.
+export async function pruneHealthHistory(cutoff: Date): Promise<PruneCounts> {
+	const keep = await prisma.backupRun.findFirst({
+		where: { status: "SUCCEEDED" },
+		orderBy: { startedAt: "desc" },
+		select: { id: true },
+	});
+
+	const [checks, backupRuns] = await prisma.$transaction([
+		prisma.healthCheck.deleteMany({ where: { checkedAt: { lt: cutoff } } }),
+		prisma.backupRun.deleteMany({
+			where: { startedAt: { lt: cutoff }, ...(keep === null ? {} : { id: { not: keep.id } }) },
+		}),
+	]);
+
+	return { checks: checks.count, backupRuns: backupRuns.count };
 }
