@@ -19,35 +19,58 @@ function bucket(): string {
 	return config.storage.bucket as string;
 }
 
-let client: S3Client | null = null;
+function createClient(endpoint: string): S3Client {
+	const storage = config.storage;
 
+	return new S3Client({
+		endpoint,
+		region: storage.region,
+		credentials: {
+			accessKeyId: storage.accessKeyId as string,
+			secretAccessKey: storage.secretAccessKey as string,
+		},
+		// Path-style bucket addressing for SeaweedFS and other
+		// self-hosted S3 implementations (S3_FORCE_PATH_STYLE).
+		forcePathStyle: storage.forcePathStyle,
+		// The SDK otherwise bakes a CRC32 of the (empty, at signing time) body
+		// into presigned PUT URLs, so every real upload fails with BadDigest.
+		requestChecksumCalculation: "WHEN_REQUIRED",
+	});
+}
+
+let client: S3Client | null = null;
+let presignClient: S3Client | null = null;
+
+// Server-side operations (head, ranged reads, hashing) use S3_ENDPOINT.
 function getClient(): S3Client | null {
 	if (!isConfigured()) {
 		return null;
 	}
 
-	if (client === null) {
-		const storage = config.storage;
-
-		client = new S3Client({
-			endpoint: storage.endpoint,
-			region: storage.region,
-			credentials: {
-				accessKeyId: storage.accessKeyId as string,
-				secretAccessKey: storage.secretAccessKey as string,
-			},
-			// Path-style bucket addressing for SeaweedFS and other
-			// self-hosted S3 implementations (S3_FORCE_PATH_STYLE).
-			forcePathStyle: storage.forcePathStyle,
-		});
-	}
+	client ??= createClient(config.storage.endpoint as string);
 
 	return client;
 }
 
+// Presigned URLs embed the host they were signed for, so they are signed
+// against the browser-reachable S3_PUBLIC_ENDPOINT when the API reaches
+// storage over an internal address (e.g. http://seaweedfs:8333 in Docker).
+// Signing is offline: this client never opens a connection.
+function getPresignClient(): S3Client | null {
+	const publicEndpoint = config.storage.publicEndpoint;
+
+	if (!isConfigured() || publicEndpoint === undefined) {
+		return getClient();
+	}
+
+	presignClient ??= createClient(publicEndpoint);
+
+	return presignClient;
+}
+
 export const s3Storage: StoragePort = {
 	async presignPut(key: string, options: PresignPutOptions): Promise<string | null> {
-		const s3 = getClient();
+		const s3 = getPresignClient();
 
 		if (s3 === null) {
 			return null;
@@ -66,7 +89,7 @@ export const s3Storage: StoragePort = {
 	},
 
 	async presignGet(key: string, expiresInSeconds?: number): Promise<string | null> {
-		const s3 = getClient();
+		const s3 = getPresignClient();
 
 		if (s3 === null) {
 			return null;
