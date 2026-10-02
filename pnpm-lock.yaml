@@ -47,6 +47,9 @@ importers:
       argon2:
         specifier: ^0.45.1
         version: 0.45.1
+      dotenv:
+        specifier: ^18.0.4
+        version: 18.0.4
       fastify:
         specifier: 5.12.1
         version: 5.12.1
@@ -72,9 +75,6 @@ importers:
       '@typescript-eslint/parser':
         specifier: 8.68.0
         version: 8.68.0(eslint@10.9.1(jiti@2.7.0))(typescript@5.9.3)
-      dotenv:
-        specifier: ^18.0.4
-        version: 18.0.4
       eslint:
         specifier: 10.9.1
         version: 10.9.1(jiti@2.7.0)
