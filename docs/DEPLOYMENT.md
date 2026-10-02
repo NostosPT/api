@@ -108,7 +108,7 @@ Check from the proxy VPS:
 
 ```bash
 curl https://api.nostos.photos/v1/health   # liveness
-curl https://api.nostos.photos/v1/ready    # PostgreSQL reachable
+curl https://api.nostos.photos/v1/ready    # PostgreSQL + storage reachable
 ```
 
 ## Operations
@@ -179,5 +179,4 @@ tag in `compose.prod.yml` **and** `deploy/backup/Dockerfile`, remove the
 
 * SeaweedFS runs as a single node: durability comes from the off-site backup,
   not replication (DECISIONS.md open item on SeaweedFS topology).
-* `/v1/ready` checks PostgreSQL only, not storage.
 * There is no seed or bootstrap command for the first ADMIN user yet.
