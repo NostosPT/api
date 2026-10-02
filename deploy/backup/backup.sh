@@ -8,6 +8,10 @@
 #   postgres/<db>-<UTC stamp>.dump    pg_dump custom format, pruned after BACKUP_RETENTION_DAYS
 #   photos/                           mirror of the photo bucket
 #   photos-deleted/<UTC stamp>/       objects removed/replaced at the source, kept for BACKUP_RETENTION_DAYS
+#
+# Each run is also recorded in the "BackupRun" table, which the API's health
+# monitor reads to judge backup freshness. Recording is best effort: it never
+# fails or blocks the backup itself.
 set -eu
 
 . /usr/local/lib/backup/lib.sh
@@ -28,18 +32,47 @@ ping_healthcheck() {
 	fi
 }
 
+run_id=""
+
+# Timestamps are written in UTC to match the columns Prisma manages
+# (timestamp without time zone, UTC).
+record_start() {
+	run_id="$(psql -qAtX -v ON_ERROR_STOP=1 \
+		-c "INSERT INTO \"BackupRun\" (status, \"startedAt\") VALUES ('RUNNING', now() AT TIME ZONE 'UTC') RETURNING id" \
+		2> /dev/null)" || {
+		run_id=""
+		log "could not record backup start in PostgreSQL"
+	}
+}
+
+# Values reach SQL only as psql variables (:'name' quotes them), via stdin.
+# record_finish SUCCEEDED|FAILED [error code]
+record_finish() {
+	[ -n "$run_id" ] || return 0
+
+	psql -qAtX -v ON_ERROR_STOP=1 -v run_id="$run_id" -v status="$1" -v error_code="${2:-}" > /dev/null 2>&1 <<-'SQL' || log "could not record backup result in PostgreSQL"
+		UPDATE "BackupRun"
+		SET status = :'status', "finishedAt" = now() AT TIME ZONE 'UTC', "errorCode" = NULLIF(:'error_code', '')
+		WHERE id = :'run_id';
+	SQL
+}
+
 on_exit() {
 	status=$?
 	rm -f "$dump"
 
 	if [ "$status" -ne 0 ]; then
 		log "backup FAILED (exit ${status})"
+		record_finish FAILED "exit_${status}"
 		ping_healthcheck /fail
+	else
+		record_finish SUCCEEDED
 	fi
 }
 
 trap on_exit EXIT
 
+record_start
 ping_healthcheck /start
 
 log "dumping database ${PGDATABASE}"
