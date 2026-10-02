@@ -20,6 +20,15 @@ export async function insertHealthChecks(results: CheckResult[]): Promise<void> 
 	});
 }
 
+export async function listActiveAdminEmails(): Promise<string[]> {
+	const admins = await prisma.user.findMany({
+		where: { role: "ADMIN", status: "ACTIVE" },
+		select: { email: true },
+	});
+
+	return admins.map((admin) => admin.email);
+}
+
 const backupRunSelect = { status: true, startedAt: true, finishedAt: true, errorCode: true } as const;
 
 function toSummary(row: { status: string; startedAt: Date; finishedAt: Date | null; errorCode: string | null } | null): BackupRunSummary | null {
