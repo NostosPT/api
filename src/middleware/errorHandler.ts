@@ -145,7 +145,17 @@ export async function registerErrorHandler(app: FastifyInstance): Promise<void> 
 		const message = getErrorMessage(error, statusCode);
 		const details = getValidationDetails(error);
 
-		logger.error(`Request failed with status ${statusCode} and code ${code} for request ${request.method} ${request.url} with requestId ${request.id}`);
+		const summary = `Request failed with status ${statusCode} and code ${code} for request ${request.method} ${request.url} with requestId ${request.id}`;
+
+		// 5xx responses hide the cause from the client, so the original error
+		// (message, stack, Prisma code/meta) is logged server-side under `err`,
+		// which pino serializes and the shared redaction paths still cover.
+		if (statusCode >= 500) {
+			logger.error(summary, { err: error, requestId: request.id });
+		}
+		else {
+			logger.error(summary);
+		}
 
 		const response: ErrorResponse = {
 			error: {
