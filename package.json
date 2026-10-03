@@ -22,7 +22,8 @@
 		"lint": "eslint src",
 		"lint:fix": "eslint src --fix",
 		"typecheck": "tsc --noEmit",
-		"test": "vitest run"
+		"test": "vitest run",
+		"loadtest": "bash loadtest/run.sh"
 	},
 	"repository": {
 		"type": "git",

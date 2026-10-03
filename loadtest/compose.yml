@@ -1,0 +1,146 @@
+# Isolated load-test stack: production API image + PostgreSQL + SeaweedFS.
+#
+# Own project name, volumes and 127.0.0.1-only ports, so it never touches the
+# dev stack (compose.yml) or production. Driven by loadtest/run.sh; see
+# loadtest/README.md.
+#
+# The API runs exactly as in production (NODE_ENV=production, same image and
+# hardening) with two test-only differences:
+#   - MONITOR_ENABLED=false: background probes would add noise to the numbers.
+#   - NODE_OPTIONS preloads loadtest/probe/probe.mjs, a read-only metrics
+#     endpoint (event loop, heap, GC). No application code is changed.
+name: nostos-loadtest
+
+services:
+  postgres:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_DB: nostos_loadtest
+      POSTGRES_USER: nostos
+      POSTGRES_PASSWORD: nostos-loadtest
+    command:
+      - postgres
+      # Query-level statistics and plans for slow statements. These add a few
+      # percent of overhead, which is acceptable for finding hot queries.
+      - -c
+      - shared_preload_libraries=pg_stat_statements,auto_explain
+      - -c
+      - pg_stat_statements.track=top
+      - -c
+      - pg_stat_statements.max=5000
+      - -c
+      - track_io_timing=on
+      - -c
+      - auto_explain.log_min_duration=250ms
+      - -c
+      - auto_explain.log_format=json
+      - -c
+      - log_min_duration_statement=500ms
+      - -c
+      - log_lock_waits=on
+      # Stock settings otherwise: production runs postgres:18.6-alpine untuned.
+    ports:
+      - "127.0.0.1:${LT_PG_PORT:-55432}:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nostos -d nostos_loadtest"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    command: ["server", "-s3", "-s3.port=8333", "-s3.allowedOrigins=*"]
+    environment:
+      AWS_ACCESS_KEY_ID: loadtest
+      AWS_SECRET_ACCESS_KEY: loadtest-secret
+    ports:
+      - "127.0.0.1:${LT_S3_PORT:-18333}:8333"
+    volumes:
+      - s3-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  storage-init:
+    image: rclone/rclone:1.75.1
+    restart: "no"
+    command: ["mkdir", "seaweedfs:nostos"]
+    environment:
+      RCLONE_CONFIG: /dev/null
+      RCLONE_CONFIG_SEAWEEDFS_TYPE: s3
+      RCLONE_CONFIG_SEAWEEDFS_PROVIDER: SeaweedFS
+      RCLONE_CONFIG_SEAWEEDFS_ENDPOINT: http://seaweedfs:8333
+      RCLONE_CONFIG_SEAWEEDFS_ACCESS_KEY_ID: loadtest
+      RCLONE_CONFIG_SEAWEEDFS_SECRET_ACCESS_KEY: loadtest-secret
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+
+  migrate:
+    build:
+      context: ..
+      target: migrate
+    image: nostos-api-migrate:loadtest
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://nostos:nostos-loadtest@postgres:5432/nostos_loadtest
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ..
+      target: runtime
+    image: nostos-api:loadtest
+    init: true
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      NODE_OPTIONS: --import=/probe/probe.mjs
+      PROBE_PORT: 9464
+      CORS_ORIGINS: http://localhost:5173
+      DATABASE_URL: postgresql://nostos:nostos-loadtest@postgres:5432/nostos_loadtest
+      # Test-only secret, never used outside this stack.
+      COOKIE_SECRET: loadtest-cookie-secret-0123456789abcdef0123456789
+      # Same as production behind Caddy: the client IP comes from
+      # X-Forwarded-For, which k6 sets to a distinct address per virtual user.
+      TRUST_PROXY: "true"
+      LOG_LEVEL: ${LT_LOG_LEVEL:-info}
+      DOCS_ENABLED: "false"
+      MONITOR_ENABLED: "false"
+      STORAGE_PROVIDER: s3
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_REGION: us-east-1
+      S3_BUCKET: nostos
+      S3_ACCESS_KEY_ID: loadtest
+      S3_SECRET_ACCESS_KEY: loadtest-secret
+      # Presigned URLs must be reachable from k6 on the host.
+      S3_PUBLIC_ENDPOINT: http://127.0.0.1:${LT_S3_PORT:-18333}
+      S3_FORCE_PATH_STYLE: "true"
+    volumes:
+      - ./probe:/probe:ro
+    ports:
+      - "127.0.0.1:${LT_API_PORT:-3100}:3000"
+      - "127.0.0.1:${LT_PROBE_PORT:-19464}:9464"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      storage-init:
+        condition: service_completed_successfully
+
+volumes:
+  pg-data:
+  s3-data:
