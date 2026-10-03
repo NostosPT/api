@@ -8,10 +8,6 @@ import {
 	findPublicTags,
 	listPublicPhotos as repoListPublicPhotos,
 	countPublicPhotos as repoCountPublicPhotos,
-	findPublishedGalleryIds,
-	findMembershipPhotoIds,
-	findPhotoIdsByCategorySlug,
-	findPhotoIdsByTagSlug,
 	findPublishedGalleries,
 	findGalleryBySlugPublic,
 	getPublishedGalleryEntries,
@@ -23,6 +19,7 @@ import {
 	findAtlasLocationIdsByCategorySlug,
 	findAtlasCategories,
 	type PublicAtlasWhere,
+	type PublicPhotoFilter,
 } from "./repository.js";
 import {
 	toPublicGalleryDTO,
@@ -111,92 +108,31 @@ export async function getPublicGallery(slug: string): Promise<PublicGalleryDetai
 	return { ...toPublicGalleryDTO(gallery), photos: publicPhotos };
 }
 
-function buildPhotoWhere(query: ListPublicPhotosQuery): Omit<Parameters<typeof repoListPublicPhotos>[1], "id"> {
-	const where: Record<string, unknown> = {};
+function toPhotoFilter(query: ListPublicPhotosQuery): PublicPhotoFilter {
+	const takenFrom = parseDate(query.takenFrom);
+	const takenTo = parseDate(query.takenTo);
 
-	if (query.takenFrom !== undefined || query.takenTo !== undefined) {
-		where.takenAt = {
-			...(query.takenFrom !== undefined ? { gte: parseDate(query.takenFrom) } : {}),
-			...(query.takenTo !== undefined ? { lte: parseDate(query.takenTo) } : {}),
-		};
-	}
-
-	if (query.q !== undefined) {
-		const q = query.q.trim();
-
-		if (/^\d+$/.test(q)) {
-			where.OR = [
-				{ title: { contains: q, mode: "insensitive" } },
-				{ description: { contains: q, mode: "insensitive" } },
-				{ number: parseInt(q, 10) },
-			];
-		} else {
-			where.OR = [
-				{ title: { contains: q, mode: "insensitive" } },
-				{ description: { contains: q, mode: "insensitive" } },
-			];
-		}
-	}
-
-	return where;
+	return {
+		gallerySlug: query.gallery,
+		categorySlug: query.category,
+		tagSlug: query.tag,
+		// "featured" keeps photos with at least one featured pin in a published gallery.
+		featuredOnly: query.sort === "featured",
+		...(takenFrom === null ? {} : { takenFrom }),
+		...(takenTo === null ? {} : { takenTo }),
+		...(query.q === undefined ? {} : { q: query.q.trim() }),
+	};
 }
 
 export async function listPublicPhotos(query: ListPublicPhotosQuery): Promise<PublicPhotoPage> {
 	const page = query.page ?? 1;
 	const pageSize = query.pageSize ?? 20;
+	const filter = toPhotoFilter(query);
+	const direction = query.sort === "oldest" ? "asc" : "desc";
 
-	// 1. Candidate photos = those in any published gallery.
-	const publishedGalleryIds = await findPublishedGalleryIds();
-	const membership = await findMembershipPhotoIds(publishedGalleryIds);
-
-	let candidateSet = new Set(membership.map((m) => m.photoId));
-
-	// 2. Narrow by gallery slug (if provided).
-	if (query.gallery !== undefined) {
-		const gallery = await findGalleryBySlugPublic(query.gallery);
-
-		if (gallery === null) {
-			candidateSet = new Set();
-		} else {
-			const entries = await getPublishedGalleryEntries(gallery.id);
-			candidateSet = new Set(entries.map((e) => e.photoId));
-		}
-	}
-
-	// 3. Narrow by category/tag (intersect).
-	if (query.category !== undefined) {
-		const catIds = await findPhotoIdsByCategorySlug(query.category);
-		candidateSet = new Set(catIds.filter((id) => candidateSet.has(id)));
-	}
-
-	if (query.tag !== undefined) {
-		const tagIds = await findPhotoIdsByTagSlug(query.tag);
-		candidateSet = new Set(tagIds.filter((id) => candidateSet.has(id)));
-	}
-
-	if (candidateSet.size === 0) {
-		return { items: [], page, pageSize, total: 0 };
-	}
-
-	// 4. Featured filter: keep only photos with at least one featured pin.
-	if (query.sort === "featured") {
-		const featuredIds = new Set(membership.filter((m) => m.isFeatured).map((m) => m.photoId));
-		candidateSet = new Set([...candidateSet].filter((id) => featuredIds.has(id)));
-
-		if (candidateSet.size === 0) {
-			return { items: [], page, pageSize, total: 0 };
-		}
-	}
-
-	const where = buildPhotoWhere(query);
-
-	// 5. Order.
-	const orderBy: { createdAt: "asc" | "desc" } = query.sort === "oldest" ? { createdAt: "asc" } : { createdAt: "desc" };
-
-	// 6. Paginate + total (repository does candidate filtering in JS for mock compatibility).
 	const [photos, total] = await Promise.all([
-		repoListPublicPhotos(candidateSet, where, (page - 1) * pageSize, pageSize, orderBy),
-		repoCountPublicPhotos(candidateSet, where),
+		repoListPublicPhotos(filter, (page - 1) * pageSize, pageSize, direction),
+		repoCountPublicPhotos(filter),
 	]);
 
 	return {

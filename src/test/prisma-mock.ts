@@ -2,7 +2,8 @@
 // operations repositories use (findUnique/findFirst/findMany/count/create/
 // update/updateMany/delete/deleteMany) with equality, null, gt/lt/in/
 // startsWith/contains (with insensitive mode)/not matching, OR/AND where
-// clauses plus orderBy/skip/take. Unique violations mimic P2002 so
+// clauses, relation filters on registered relations (`some`/`none`/`every`
+// for to-many, a nested where for to-one) plus orderBy/skip/take. Unique violations mimic P2002 so
 // repository mapping is exercised realistically. No PostgreSQL required.
 
 interface P2002Error {
@@ -61,6 +62,14 @@ function compareValues(actual: Scalar, expected: Scalar): number {
 
 function matchesCondition(actual: Scalar, condition: Condition): boolean {
 	if (isOperator(condition)) {
+		const isRange =
+			condition.gt !== undefined || condition.lt !== undefined || condition.gte !== undefined || condition.lte !== undefined;
+
+		// SQL comparisons with NULL are never true.
+		if (isRange && (actual === null || actual === undefined)) {
+			return false;
+		}
+
 		if (condition.gt !== undefined && compareValues(actual, condition.gt) <= 0) {
 			return false;
 		}
@@ -117,22 +126,65 @@ function matchesCondition(actual: Scalar, condition: Condition): boolean {
 	return compareValues(actual, condition) === 0;
 }
 
-function matchesWhere(row: RecordRow, where?: WhereInput): boolean {
+// A relation joins `from` on this model to `to` on the target model, like the
+// foreign keys in schema.prisma (e.g. Photo.id -> GalleryPhoto.photoId).
+interface Relation {
+	kind: "many" | "one";
+	target: MockModel;
+	from: string;
+	to: string;
+}
+
+interface ManyRelationFilter {
+	some?: WhereInput;
+	none?: WhereInput;
+	every?: WhereInput;
+}
+
+function matchesRelation(row: RecordRow, relation: Relation, filter: WhereInput): boolean {
+	const key = row[relation.from];
+	const related =
+		key === null || key === undefined
+			? []
+			: relation.target.rows.filter((candidate) => compareValues(candidate[relation.to], key) === 0);
+	const matches = (candidate: RecordRow, clause?: WhereInput): boolean =>
+		matchesWhere(candidate, clause, relation.target);
+
+	if (relation.kind === "one") {
+		return related.length > 0 && matches(related[0], filter);
+	}
+
+	const { some, none, every } = filter as ManyRelationFilter;
+
+	return (
+		(some === undefined || related.some((candidate) => matches(candidate, some))) &&
+		(none === undefined || !related.some((candidate) => matches(candidate, none))) &&
+		(every === undefined || related.every((candidate) => matches(candidate, every)))
+	);
+}
+
+function matchesWhere(row: RecordRow, where?: WhereInput, model?: MockModel): boolean {
 	if (!where) {
 		return true;
 	}
 
 	return Object.entries(where).every(([field, condition]) => {
 		if (field === "OR" && Array.isArray(condition)) {
-			return condition.some((clause) => matchesWhere(row, clause));
+			return condition.some((clause) => matchesWhere(row, clause, model));
 		}
 
 		if (field === "AND" && Array.isArray(condition)) {
-			return condition.every((clause) => matchesWhere(row, clause));
+			return condition.every((clause) => matchesWhere(row, clause, model));
 		}
 
 		if (Array.isArray(condition)) {
 			return false;
+		}
+
+		const relation = model?.relations[field];
+
+		if (relation !== undefined) {
+			return matchesRelation(row, relation, condition as unknown as WhereInput);
 		}
 
 		return matchesCondition(row[field], condition);
@@ -208,6 +260,8 @@ class MockModel {
 	// Integer columns with @default(autoincrement()); the mock fills the next
 	// value from existing rows exactly like the sequence would.
 	autoIncrementFields: string[];
+	// Relation fields usable in where clauses; registered in createMockPrisma.
+	relations: Record<string, Relation> = {};
 
 	constructor(
 		uniqueFields: string[][] = [],
@@ -244,7 +298,7 @@ class MockModel {
 	}
 
 	findUnique(args: { where: WhereInput; select?: Record<string, boolean> }): RecordRow | null {
-		const found = this.rows.find((row) => matchesWhere(row, args.where)) ?? null;
+		const found = this.rows.find((row) => matchesWhere(row, args.where, this)) ?? null;
 
 		if (found === null) {
 			return null;
@@ -272,7 +326,7 @@ class MockModel {
 	}
 
 	private applyFindMany(args: FindManyArgs): RecordRow[] {
-		let result = this.rows.filter((row) => matchesWhere(row, args.where));
+		let result = this.rows.filter((row) => matchesWhere(row, args.where, this));
 
 		const orderClauses = args.orderBy === undefined ? [] : Array.isArray(args.orderBy) ? args.orderBy : [args.orderBy];
 
@@ -294,7 +348,7 @@ class MockModel {
 	}
 
 	count(args: { where?: WhereInput } = {}): number {
-		return this.rows.filter((row) => matchesWhere(row, args.where)).length;
+		return this.rows.filter((row) => matchesWhere(row, args.where, this)).length;
 	}
 
 	create(args: { data: RecordRow; select?: Record<string, boolean> }): RecordRow {
@@ -337,7 +391,7 @@ class MockModel {
 	}
 
 	update(args: { where?: WhereInput; data: RecordRow }): RecordRow {
-		const row = this.rows.find((candidate) => matchesWhere(candidate, args.where));
+		const row = this.rows.find((candidate) => matchesWhere(candidate, args.where, this));
 
 		if (!row) {
 			throw { code: "P2025" };
@@ -358,7 +412,7 @@ class MockModel {
 		let count = 0;
 
 		for (const row of this.rows) {
-			if (matchesWhere(row, args.where)) {
+			if (matchesWhere(row, args.where, this)) {
 				Object.assign(row, args.data);
 				count += 1;
 			}
@@ -368,7 +422,7 @@ class MockModel {
 	}
 
 	delete(args: { where?: WhereInput }): RecordRow {
-		const index = this.rows.findIndex((row) => matchesWhere(row, args.where));
+		const index = this.rows.findIndex((row) => matchesWhere(row, args.where, this));
 
 		if (index === -1) {
 			throw { code: "P2025" };
@@ -381,7 +435,7 @@ class MockModel {
 
 	deleteMany(args: { where?: WhereInput }): { count: number } {
 		const before = this.rows.length;
-		this.rows = this.rows.filter((row) => !matchesWhere(row, args.where));
+		this.rows = this.rows.filter((row) => !matchesWhere(row, args.where, this));
 
 		return { count: before - this.rows.length };
 	}
@@ -537,6 +591,23 @@ export function createMockPrisma(): MockPrisma {
 		$transaction: async function $transaction<T>(fn: (tx: MockPrisma) => Promise<T>): Promise<T> {
 			return fn(mock);
 		},
+	};
+
+	// Relations used by repository where clauses (mirrors schema.prisma).
+	mock.photo.relations = {
+		galleryEntries: { kind: "many", target: mock.galleryPhoto, from: "id", to: "photoId" },
+		categories: { kind: "many", target: mock.photoCategory, from: "id", to: "photoId" },
+		tags: { kind: "many", target: mock.photoTag, from: "id", to: "photoId" },
+	};
+	mock.galleryPhoto.relations = {
+		gallery: { kind: "one", target: mock.gallery, from: "galleryId", to: "id" },
+		photo: { kind: "one", target: mock.photo, from: "photoId", to: "id" },
+	};
+	mock.photoCategory.relations = {
+		category: { kind: "one", target: mock.category, from: "categoryId", to: "id" },
+	};
+	mock.photoTag.relations = {
+		tag: { kind: "one", target: mock.tag, from: "tagId", to: "id" },
 	};
 
 	return mock;
