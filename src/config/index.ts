@@ -71,3 +71,5 @@ export function loadConfig(): AppConfig {
 }
 
 export const config = loadConfig();
+
+export { CURRENT_API_VERSION } from "./api-version.js";
