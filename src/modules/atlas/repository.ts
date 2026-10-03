@@ -186,12 +186,14 @@ export async function getLocationPhotoIds(locationId: string): Promise<LocationP
 export async function replaceLocationPhotos(locationId: string, entries: LocationPhotoEntry[]): Promise<void> {
 	await prisma.$transaction(async (tx) => {
 		await tx.atlasLocationPhoto.deleteMany({ where: { locationId } });
-
-		for (const entry of entries) {
-			await tx.atlasLocationPhoto.create({
-				data: { locationId, photoId: entry.photoId, caption: entry.caption, position: entry.position },
-			});
-		}
+		await tx.atlasLocationPhoto.createMany({
+			data: entries.map((entry) => ({
+				locationId,
+				photoId: entry.photoId,
+				caption: entry.caption,
+				position: entry.position,
+			})),
+		});
 	});
 }
 
@@ -226,10 +228,9 @@ export async function findLocationCategories(
 export async function replaceLocationCategories(locationId: string, categoryIds: string[]): Promise<void> {
 	await prisma.$transaction(async (tx) => {
 		await tx.atlasLocationCategory.deleteMany({ where: { locationId } });
-
-		for (const categoryId of categoryIds) {
-			await tx.atlasLocationCategory.create({ data: { locationId, categoryId } });
-		}
+		await tx.atlasLocationCategory.createMany({
+			data: categoryIds.map((categoryId) => ({ locationId, categoryId })),
+		});
 	});
 }
 

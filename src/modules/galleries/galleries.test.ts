@@ -273,6 +273,47 @@ describe("gallery membership and featured flags", () => {
 
 		expect(notMember.statusCode).toBe(404);
 	});
+
+	it("replaces membership with one bulk insert and resets featured flags", async () => {
+		const created = await createGallery(adminCookie, { title: "Bulk" });
+		const id = created.json().id as string;
+
+		await app.inject({
+			method: "PUT",
+			url: `/v1/galleries/${id}/photos`,
+			headers: { cookie: adminCookie },
+			payload: { photoIds: [photoA, photoB] },
+		});
+
+		await app.inject({
+			method: "PATCH",
+			url: `/v1/galleries/${id}/photos/${photoA}`,
+			headers: { cookie: adminCookie },
+			payload: { isFeatured: true },
+		});
+
+		const createMany = vi.spyOn(mock.galleryPhoto, "createMany");
+		const create = vi.spyOn(mock.galleryPhoto, "create");
+
+		const replaced = await app.inject({
+			method: "PUT",
+			url: `/v1/galleries/${id}/photos`,
+			headers: { cookie: adminCookie },
+			payload: { photoIds: [photoC, photoA, photoB] },
+		});
+
+		expect(replaced.statusCode).toBe(200);
+		expect(replaced.json().entries).toEqual([
+			{ photoId: photoC, position: 1, isFeatured: false },
+			{ photoId: photoA, position: 2, isFeatured: false },
+			{ photoId: photoB, position: 3, isFeatured: false },
+		]);
+		expect(createMany).toHaveBeenCalledTimes(1);
+		expect(create).not.toHaveBeenCalled();
+
+		createMany.mockRestore();
+		create.mockRestore();
+	});
 });
 
 describe("gallery permission matrix", () => {

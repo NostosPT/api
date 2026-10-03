@@ -115,15 +115,13 @@ export async function findPhotosByIds(ids: string[]): Promise<{ id: string }[]> 
 }
 
 // Full replacement keeps positions dense (1..n) as the schema requires.
+// One multi-row INSERT keeps the transaction short regardless of gallery size.
 export async function replaceGalleryPhotos(galleryId: string, photoIds: string[]): Promise<void> {
 	await prisma.$transaction(async (tx) => {
 		await tx.galleryPhoto.deleteMany({ where: { galleryId } });
-
-		for (const [index, photoId] of photoIds.entries()) {
-			await tx.galleryPhoto.create({
-				data: { galleryId, photoId, position: index + 1, isFeatured: false },
-			});
-		}
+		await tx.galleryPhoto.createMany({
+			data: photoIds.map((photoId, index) => ({ galleryId, photoId, position: index + 1, isFeatured: false })),
+		});
 	});
 }
 
