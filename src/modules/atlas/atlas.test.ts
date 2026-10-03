@@ -232,6 +232,66 @@ describe("atlas locations", () => {
 		expect(unknown.statusCode).toBe(404);
 	});
 
+	it("replaces photos and categories with one bulk insert each", async () => {
+		const created = await createLocation(adminCookie, { name: "Bulk", latitude: 1, longitude: 1 });
+		const id = created.json().id as string;
+
+		await app.inject({
+			method: "PUT",
+			url: `/v1/atlas/locations/${id}/photos`,
+			headers: { cookie: adminCookie },
+			payload: { photoIds: [photoA, photoB], captions: { [photoA]: "Dawn" } },
+		});
+		await app.inject({
+			method: "PUT",
+			url: `/v1/atlas/locations/${id}/categories`,
+			headers: { cookie: adminCookie },
+			payload: { categorySlugs: ["street"] },
+		});
+
+		const photoCreateMany = vi.spyOn(mock.atlasLocationPhoto, "createMany");
+		const photoCreate = vi.spyOn(mock.atlasLocationPhoto, "create");
+		const categoryCreateMany = vi.spyOn(mock.atlasLocationCategory, "createMany");
+		const categoryCreate = vi.spyOn(mock.atlasLocationCategory, "create");
+
+		const photos = await app.inject({
+			method: "PUT",
+			url: `/v1/atlas/locations/${id}/photos`,
+			headers: { cookie: adminCookie },
+			payload: { photoIds: [photoB, photoA], captions: { [photoB]: "Dusk" } },
+		});
+
+		expect(photos.statusCode).toBe(200);
+		expect(photos.json().photos.map((photo: { photoId: string; caption: string | null; position: number }) => ({
+			photoId: photo.photoId,
+			caption: photo.caption,
+			position: photo.position,
+		}))).toEqual([
+			{ photoId: photoB, caption: "Dusk", position: 0 },
+			{ photoId: photoA, caption: null, position: 1 },
+		]);
+		expect(photoCreateMany).toHaveBeenCalledTimes(1);
+		expect(photoCreate).not.toHaveBeenCalled();
+
+		const categories = await app.inject({
+			method: "PUT",
+			url: `/v1/atlas/locations/${id}/categories`,
+			headers: { cookie: adminCookie },
+			payload: { categorySlugs: ["landscape", "street"] },
+		});
+
+		expect(categories.statusCode).toBe(200);
+		expect(categories.json().categories.map((c: { slug: string }) => c.slug).sort()).toEqual(["landscape", "street"]);
+		expect(mock.atlasLocationCategory.rows.filter((row) => row.locationId === id)).toHaveLength(2);
+		expect(categoryCreateMany).toHaveBeenCalledTimes(1);
+		expect(categoryCreate).not.toHaveBeenCalled();
+
+		photoCreateMany.mockRestore();
+		photoCreate.mockRestore();
+		categoryCreateMany.mockRestore();
+		categoryCreate.mockRestore();
+	});
+
 	it("enforces the permission matrix", async () => {
 		// Unauthenticated.
 		expect((await app.inject({ method: "GET", url: "/v1/atlas/locations" })).statusCode).toBe(401);

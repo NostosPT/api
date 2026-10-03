@@ -81,8 +81,6 @@ export async function getPurchaseItems(purchaseId: string): Promise<{ photoId: s
 // at completion for ALBUM) and never updated.
 export async function addPurchaseItems(purchaseId: string, photoIds: string[]): Promise<void> {
 	await prisma.$transaction(async (tx) => {
-		for (const photoId of photoIds) {
-			await tx.purchasePhoto.create({ data: { purchaseId, photoId } });
-		}
+		await tx.purchasePhoto.createMany({ data: photoIds.map((photoId) => ({ purchaseId, photoId })) });
 	});
 }

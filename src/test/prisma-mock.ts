@@ -1,6 +1,6 @@
 // In-memory Prisma stand-in for inject() tests. Implements exactly the
 // operations repositories use (findUnique/findFirst/findMany/count/create/
-// update/updateMany/delete/deleteMany) with equality, null, gt/lt/in/
+// createMany/update/updateMany/delete/deleteMany) with equality, null, gt/lt/in/
 // startsWith/contains (with insensitive mode)/not matching, OR/AND where
 // clauses plus orderBy/skip/take. Unique violations mimic P2002 so
 // repository mapping is exercised realistically. No PostgreSQL required.
@@ -298,7 +298,28 @@ class MockModel {
 	}
 
 	create(args: { data: RecordRow; select?: Record<string, boolean> }): RecordRow {
-		const row: RecordRow = { ...args.data };
+		return this.project(this.insert(args.data), args.select);
+	}
+
+	// One multi-row INSERT: any unique violation rejects the whole batch.
+	createMany(args: { data: RecordRow[] }): { count: number } {
+		const before = this.rows.length;
+
+		try {
+			for (const data of args.data) {
+				this.insert(data);
+			}
+		}
+		catch (error) {
+			this.rows.length = before;
+			throw error;
+		}
+
+		return { count: args.data.length };
+	}
+
+	private insert(data: RecordRow): RecordRow {
+		const row: RecordRow = { ...data };
 
 		if (row.id === undefined) {
 			row.id = mockId();
@@ -333,7 +354,7 @@ class MockModel {
 		this.checkUnique(row);
 		this.rows.push(row);
 
-		return this.project(row, args.select);
+		return row;
 	}
 
 	update(args: { where?: WhereInput; data: RecordRow }): RecordRow {
