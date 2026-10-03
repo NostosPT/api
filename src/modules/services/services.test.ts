@@ -1,5 +1,6 @@
 import "../../test/env.js";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 import { createMockPrisma, resetMock, resetMockIds, type MockPrisma } from "../../test/prisma-mock.js";
 
@@ -28,6 +29,10 @@ beforeEach(async () => {
 	const admin = await seedUser(mock, { email: "admin@nostos.photos", role: "ADMIN" });
 
 	adminCookie = sessionCookie(await seedSession(mock, admin.id));
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
 });
 
 async function createService(name: string, slug: string) {
@@ -127,6 +132,52 @@ describe("service ordering", () => {
 		expect(down.json().position).toBe(3);
 		expect(await listSlugs()).toEqual(["weddings", "families"]);
 		expect(mock.service.rows.find((row) => row.id === first.json().id)?.position).toBe(1);
+	});
+
+	it("returns 409 and keeps the order when a concurrent move lands first", async () => {
+		const first = await createService("Weddings", "weddings");
+		const second = await createService("Portraits", "portraits");
+		const findFirst = mock.service.findFirst.bind(mock.service);
+
+		// The sibling is read, then another request moves it before the swap.
+		vi.spyOn(mock.service, "findFirst").mockImplementationOnce((args) => {
+			const sibling = findFirst(args);
+			const row = mock.service.rows.find((candidate) => candidate.id === first.json().id);
+
+			if (row) {
+				row.position = 5;
+			}
+
+			return sibling;
+		});
+
+		const moved = await moveService(second.json().id as string, "up");
+
+		expect(moved.statusCode).toBe(409);
+		expect(mock.service.rows.find((row) => row.id === second.json().id)?.position).toBe(2);
+		expect(mock.service.rows.find((row) => row.id === first.json().id)?.position).toBe(5);
+		expect(auditActions(mock)).not.toContain("services.move");
+	});
+
+	it.each(["P2002", "P2034"])("returns 409 and keeps the order when the swap fails with %s", async (code) => {
+		await createService("Weddings", "weddings");
+		const second = await createService("Portraits", "portraits");
+		const updateMany = mock.service.updateMany.bind(mock.service);
+
+		vi.spyOn(mock.service, "updateMany")
+			.mockImplementationOnce(updateMany)
+			.mockImplementationOnce(() => {
+				throw new Prisma.PrismaClientKnownRequestError("Swap rejected by the database", {
+					code,
+					clientVersion: Prisma.prismaVersion.client,
+				});
+			});
+
+		const moved = await moveService(second.json().id as string, "up");
+
+		expect(moved.statusCode).toBe(409);
+		expect(await listSlugs()).toEqual(["weddings", "portraits"]);
+		expect(mock.service.rows.map((row) => row.position).sort()).toEqual([1, 2]);
 	});
 
 	it("requires an admin session to move a service", async () => {

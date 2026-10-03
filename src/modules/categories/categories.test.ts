@@ -1,5 +1,5 @@
 import "../../test/env.js";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { createMockPrisma, resetMock, resetMockIds, type MockPrisma } from "../../test/prisma-mock.js";
 
@@ -40,6 +40,10 @@ beforeEach(async () => {
 	editorCookie = sessionCookie(await seedSession(mock, editor.id));
 	assistantCookie = sessionCookie(await seedSession(mock, assistant.id));
 	accountantCookie = sessionCookie(await seedSession(mock, accountant.id));
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
 });
 
 async function createCategory(cookie: string, name: string, slug: string) {
@@ -180,6 +184,35 @@ describe("category management", () => {
 
 		expect(list.json().items.map((category: { slug: string }) => category.slug)).toEqual(["families", "weddings"]);
 		expect(list.json().items.map((category: { position: number }) => category.position)).toEqual([1, 3]);
+	});
+
+	it("returns 409 and keeps the order when a concurrent move lands first", async () => {
+		const first = await createCategory(adminCookie, "Weddings", "weddings");
+		const second = await createCategory(adminCookie, "Portraits", "portraits");
+		const findFirst = mock.category.findFirst.bind(mock.category);
+
+		// The sibling is read, then another request moves it before the swap.
+		vi.spyOn(mock.category, "findFirst").mockImplementationOnce((args) => {
+			const sibling = findFirst(args);
+			const row = mock.category.rows.find((candidate) => candidate.id === first.json().id);
+
+			if (row) {
+				row.position = 5;
+			}
+
+			return sibling;
+		});
+
+		const moved = await app.inject({
+			method: "POST",
+			url: `/v1/categories/${second.json().id as string}/move`,
+			headers: { cookie: adminCookie },
+			payload: { direction: "up" },
+		});
+
+		expect(moved.statusCode).toBe(409);
+		expect(mock.category.rows.find((row) => row.id === second.json().id)?.position).toBe(2);
+		expect(auditActions(mock)).not.toContain("categories.move");
 	});
 
 	it("updates and deletes categories with audit records", async () => {

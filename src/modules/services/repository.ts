@@ -116,17 +116,53 @@ export async function moveService(id: string, direction: "up" | "down"): Promise
 	}
 
 	// Postgres checks the non-deferrable Service_position_key index on every
-	// row write, so both rows can never hold the same position mid-swap. Park
-	// the moving row on a negative position first (live positions start at 1),
-	// then hand its slot to the sibling and take the sibling's.
-	const result = await prisma.$transaction(async function(tx) {
-		await tx.service.update({ where: { id }, data: { position: -service.position } });
-		await tx.service.update({ where: { id: sibling.id }, data: { position: service.position } });
-		await tx.service.update({ where: { id }, data: { position: sibling.position } });
-		return tx.service.findUnique({ where: { id } });
-	});
+	// row write, so both rows can never hold the same position mid-swap. One
+	// row is parked on a negative position first (live positions start at 1),
+	// the other takes its slot, then the parked row takes the other's.
+	//
+	// The pair is written in id order so every move takes its row locks in
+	// the same global order and concurrent moves cannot deadlock. Each guarded
+	// write also requires the position read above: under READ COMMITTED a
+	// move that committed in between makes it match no row, and the swap
+	// aborts instead of reordering from stale positions.
+	const [first, second] = [service, sibling].sort((a, b) => (a.id < b.id ? -1 : 1));
 
-	return result!;
+	try {
+		return await prisma.$transaction(async function(tx) {
+			assertSwapRowUnchanged(await tx.service.updateMany({
+				where: { id: first.id, position: first.position },
+				data: { position: -first.position },
+			}));
+			assertSwapRowUnchanged(await tx.service.updateMany({
+				where: { id: second.id, position: second.position },
+				data: { position: first.position },
+			}));
+			await tx.service.update({ where: { id: first.id }, data: { position: second.position } });
+
+			const moved = await tx.service.findUnique({ where: { id } });
+
+			if (!moved) {
+				throw new NotFoundError("Service not found");
+			}
+
+			return moved;
+		});
+	}
+	catch (error) {
+		// P2002: unique violation; P2034: deadlock or write conflict.
+		if (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === "P2002" || error.code === "P2034")) {
+			throw new ConflictError(SERVICE_ORDER_CHANGED);
+		}
+		throw error;
+	}
+}
+
+const SERVICE_ORDER_CHANGED = "Service order changed, reload and try again";
+
+function assertSwapRowUnchanged(result: { count: number }): void {
+	if (result.count !== 1) {
+		throw new ConflictError(SERVICE_ORDER_CHANGED);
+	}
 }
 
 export async function deleteService(id: string): Promise<Service> {
