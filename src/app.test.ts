@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { Type } from "typebox";
 import { createApp } from "./app.js";
 import type { FastifyInstance } from "fastify";
-import { CURRENT_API_VERSION } from "./config/index.js";
+import { API_VERSION, CURRENT_API_VERSION, config } from "./config/index.js";
 
 let app: FastifyInstance;
 
@@ -95,16 +95,23 @@ describe("security headers and CORS", () => {
 });
 
 describe("api versioning and docs", () => {
-	it("exposes the current API version as v1", () => {
+	it("exposes the current API route version as v1", () => {
 		expect(CURRENT_API_VERSION).toBe("v1");
 	});
 
-	it("groups routes by prefix in openapi docs skipping version segment", async () => {
+	it("exposes the API release version and configures app version", () => {
+		expect(API_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+		expect(config.app.version).toBe(API_VERSION);
+	});
+
+	it("groups routes by prefix in openapi docs and serves API_VERSION", async () => {
 		const response = await app.inject({ method: "GET", url: "/docs/json" });
 		expect(response.statusCode).toBe(200);
 
 		const spec = response.json();
+		expect(spec.info.version).toBe(API_VERSION);
 		expect(spec.paths["/v1/health"]?.get?.tags).toContain("health");
 	});
 });
+
 

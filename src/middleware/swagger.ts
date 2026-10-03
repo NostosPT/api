@@ -24,7 +24,7 @@ export async function registerSwagger(app: FastifyInstance, config: AppConfig): 
 			info: {
 				title: "API",
 				description: "API documentation",
-				version: "1.0.0",
+				version: config.app.version,
 			},
 		},
 	});

@@ -1,4 +1,5 @@
 import type { AppConfig } from "../types/config.js";
+import { API_VERSION } from "./api-version.js";
 import { validateEnv } from "./env.js";
 
 let activeConfig: AppConfig | null = null;
@@ -14,7 +15,7 @@ export function loadConfig(): AppConfig {
 		env,
 		app: {
 			name: "api",
-			version: "1.0.0",
+			version: API_VERSION,
 		},
 		rateLimit: {
 			windowMs: 15 * 60 * 1000, // 15 minutes
@@ -72,4 +73,4 @@ export function loadConfig(): AppConfig {
 
 export const config = loadConfig();
 
-export { CURRENT_API_VERSION } from "./api-version.js";
+export { API_VERSION, CURRENT_API_VERSION } from "./api-version.js";
