@@ -268,6 +268,43 @@ describe("public photo listing", () => {
 		expect(res.json().items[0].number).toBe(101);
 	});
 
+	it("ignores a numeric q that overflows the photo number column", async () => {
+		// PostgreSQL rejects int4 values above 2147483647 but the mock does not,
+		// so fail the same way Prisma would if such a number reaches the query.
+		const rejectOverflow = (where: unknown, inNumber = false): void => {
+			if (typeof where === "number" && inNumber && where > 2_147_483_647) {
+				throw new Error(`Value out of range for the type int: ${where}`);
+			}
+
+			if (typeof where === "object" && where !== null && !(where instanceof Date)) {
+				for (const [key, value] of Object.entries(where)) {
+					rejectOverflow(value, inNumber || key === "number");
+				}
+			}
+		};
+		const findMany = mock.photo.findMany.bind(mock.photo);
+		const count = mock.photo.count.bind(mock.photo);
+		const findManySpy = vi.spyOn(mock.photo, "findMany").mockImplementation((args) => {
+			rejectOverflow(args?.where);
+			return findMany(args);
+		});
+		const countSpy = vi.spyOn(mock.photo, "count").mockImplementation((args) => {
+			rejectOverflow(args?.where);
+			return count(args);
+		});
+
+		try {
+			const res = await app.inject({ method: "GET", url: "/v1/public/photos?q=99999999999" });
+
+			expect(res.statusCode).toBe(200);
+			expect(res.json().total).toBe(0);
+			expect(res.json().items).toEqual([]);
+		} finally {
+			findManySpy.mockRestore();
+			countSpy.mockRestore();
+		}
+	});
+
 	it("sorts newest (default) and oldest", async () => {
 		const newest = await app.inject({ method: "GET", url: "/v1/public/photos?sort=newest" });
 		const oldest = await app.inject({ method: "GET", url: "/v1/public/photos?sort=oldest" });

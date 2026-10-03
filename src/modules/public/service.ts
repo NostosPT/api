@@ -111,6 +111,21 @@ export async function getPublicGallery(slug: string): Promise<PublicGalleryDetai
 	return { ...toPublicGalleryDTO(gallery), photos: publicPhotos };
 }
 
+// Photo.number is a PostgreSQL int4; Prisma rejects anything above this.
+const MAX_PHOTO_NUMBER = 2_147_483_647;
+
+// An all-digit search term may also be a photo number, but only when it
+// fits the column — otherwise the query would fail instead of matching nothing.
+function parsePhotoNumber(q: string): number | null {
+	if (!/^\d+$/.test(q)) {
+		return null;
+	}
+
+	const parsed = Number(q);
+
+	return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= MAX_PHOTO_NUMBER ? parsed : null;
+}
+
 function buildPhotoWhere(query: ListPublicPhotosQuery): Omit<Parameters<typeof repoListPublicPhotos>[1], "id"> {
 	const where: Record<string, unknown> = {};
 
@@ -123,19 +138,13 @@ function buildPhotoWhere(query: ListPublicPhotosQuery): Omit<Parameters<typeof r
 
 	if (query.q !== undefined) {
 		const q = query.q.trim();
+		const number = parsePhotoNumber(q);
 
-		if (/^\d+$/.test(q)) {
-			where.OR = [
-				{ title: { contains: q, mode: "insensitive" } },
-				{ description: { contains: q, mode: "insensitive" } },
-				{ number: parseInt(q, 10) },
-			];
-		} else {
-			where.OR = [
-				{ title: { contains: q, mode: "insensitive" } },
-				{ description: { contains: q, mode: "insensitive" } },
-			];
-		}
+		where.OR = [
+			{ title: { contains: q, mode: "insensitive" } },
+			{ description: { contains: q, mode: "insensitive" } },
+			...(number === null ? [] : [{ number }]),
+		];
 	}
 
 	return where;
