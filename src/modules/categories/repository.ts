@@ -88,18 +88,14 @@ export async function moveCategory(id: string, direction: "up" | "down"): Promis
 		throw new NotFoundError("Category not found");
 	}
 
-	const targetPosition = direction === "up" ? category.position - 1 : category.position + 1;
-
-	if (targetPosition < 1) {
-		throw new ValidationError("Cannot move category further");
-	}
-
+	// Nearest neighbour, not position ± 1: deletes leave gaps in the order.
 	const sibling = await prisma.category.findFirst({
-		where: { position: targetPosition },
+		where: { position: direction === "up" ? { gt: 0, lt: category.position } : { gt: category.position } },
+		orderBy: { position: direction === "up" ? "desc" : "asc" },
 	});
 
 	if (!sibling) {
-		throw new ValidationError("No category to swap with");
+		throw new ValidationError("Cannot move category further");
 	}
 
 	// The swap parks the moving row on a negative position first so the
@@ -107,7 +103,7 @@ export async function moveCategory(id: string, direction: "up" | "down"): Promis
 	const result = await prisma.$transaction(async function(tx) {
 		await tx.category.update({ where: { id }, data: { position: -category.position } });
 		await tx.category.update({ where: { id: sibling.id }, data: { position: category.position } });
-		await tx.category.update({ where: { id }, data: { position: targetPosition } });
+		await tx.category.update({ where: { id }, data: { position: sibling.position } });
 		return tx.category.findUnique({ where: { id } });
 	});
 

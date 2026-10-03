@@ -105,28 +105,24 @@ export async function moveService(id: string, direction: "up" | "down"): Promise
 		throw new NotFoundError("Service not found");
 	}
 
-	const targetPosition = direction === "up" ? service.position - 1 : service.position + 1;
-
-	if (targetPosition < 1) {
-		throw new ValidationError("Cannot move service further");
-	}
-
+	// Nearest neighbour, not position ± 1: deletes leave gaps in the order.
 	const sibling = await prisma.service.findFirst({
-		where: { position: targetPosition },
+		where: { position: direction === "up" ? { gt: 0, lt: service.position } : { gt: service.position } },
+		orderBy: { position: direction === "up" ? "desc" : "asc" },
 	});
 
 	if (!sibling) {
-		throw new ValidationError("No service to swap with");
+		throw new ValidationError("Cannot move service further");
 	}
 
 	// Postgres checks the non-deferrable Service_position_key index on every
 	// row write, so both rows can never hold the same position mid-swap. Park
 	// the moving row on a negative position first (live positions start at 1),
-	// then hand its slot to the sibling and take the target.
+	// then hand its slot to the sibling and take the sibling's.
 	const result = await prisma.$transaction(async function(tx) {
 		await tx.service.update({ where: { id }, data: { position: -service.position } });
 		await tx.service.update({ where: { id: sibling.id }, data: { position: service.position } });
-		await tx.service.update({ where: { id }, data: { position: targetPosition } });
+		await tx.service.update({ where: { id }, data: { position: sibling.position } });
 		return tx.service.findUnique({ where: { id } });
 	});
 

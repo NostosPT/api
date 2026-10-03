@@ -149,6 +149,39 @@ describe("category management", () => {
 		expect(belowBottom.statusCode).toBe(400);
 	});
 
+	it("moves across gaps left by deleted categories", async () => {
+		await createCategory(adminCookie, "Weddings", "weddings");
+		const middle = await createCategory(adminCookie, "Portraits", "portraits");
+		const last = await createCategory(adminCookie, "Families", "families");
+
+		const deleted = await app.inject({
+			method: "DELETE",
+			url: `/v1/categories/${middle.json().id as string}`,
+			headers: { cookie: adminCookie },
+		});
+
+		expect(deleted.statusCode).toBe(200);
+
+		const moved = await app.inject({
+			method: "POST",
+			url: `/v1/categories/${last.json().id as string}/move`,
+			headers: { cookie: adminCookie },
+			payload: { direction: "up" },
+		});
+
+		expect(moved.statusCode).toBe(200);
+		expect(moved.json().position).toBe(1);
+
+		const list = await app.inject({
+			method: "GET",
+			url: "/v1/categories",
+			headers: { cookie: adminCookie },
+		});
+
+		expect(list.json().items.map((category: { slug: string }) => category.slug)).toEqual(["families", "weddings"]);
+		expect(list.json().items.map((category: { position: number }) => category.position)).toEqual([1, 3]);
+	});
+
 	it("updates and deletes categories with audit records", async () => {
 		const created = await createCategory(adminCookie, "Weddings", "weddings");
 		const categoryId = created.json().id as string;

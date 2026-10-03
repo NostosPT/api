@@ -102,6 +102,33 @@ describe("service ordering", () => {
 		expect(await listSlugs()).toEqual(["weddings", "portraits"]);
 	});
 
+	it("swaps with the nearest neighbour across gaps left by deletes", async () => {
+		const first = await createService("Weddings", "weddings");
+		const middle = await createService("Portraits", "portraits");
+		const last = await createService("Families", "families");
+
+		const deleted = await app.inject({
+			method: "DELETE",
+			url: `/v1/services/${middle.json().id as string}`,
+			headers: { cookie: adminCookie },
+		});
+
+		expect(deleted.statusCode).toBe(200);
+
+		const up = await moveService(last.json().id as string, "up");
+
+		expect(up.statusCode).toBe(200);
+		expect(up.json().position).toBe(1);
+		expect(await listSlugs()).toEqual(["families", "weddings"]);
+
+		const down = await moveService(last.json().id as string, "down");
+
+		expect(down.statusCode).toBe(200);
+		expect(down.json().position).toBe(3);
+		expect(await listSlugs()).toEqual(["weddings", "families"]);
+		expect(mock.service.rows.find((row) => row.id === first.json().id)?.position).toBe(1);
+	});
+
 	it("requires an admin session to move a service", async () => {
 		const created = await createService("Weddings", "weddings");
 
