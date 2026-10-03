@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import type { Client, ClientActivity, ClientStatus, LeadSource } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
+import { insertWithCode } from "../../db/sequentialCodes.js";
 import { ConflictError } from "../../errors/appError.js";
 
 export interface CreateClientInput {
@@ -52,33 +53,11 @@ export async function countClients(where: Prisma.ClientWhereInput = {}): Promise
 	return prisma.client.count({ where });
 }
 
-export async function generateNextClientCode(): Promise<string> {
-	const year = new Date().getFullYear();
-	const prefix = `CLI-${year}-`;
-
-	const lastClient = await prisma.client.findFirst({
-		where: { clientCode: { startsWith: prefix } },
-		orderBy: { clientCode: "desc" },
-		select: { clientCode: true },
-	});
-
-	let nextNumber = 1;
-
-	if (lastClient) {
-		const match = lastClient.clientCode.match(new RegExp(`^${prefix}(\\d+)$`));
-		if (match) {
-			nextNumber = parseInt(match[1], 10) + 1;
-		}
-	}
-
-	return `${prefix}${nextNumber.toString().padStart(3, "0")}`;
-}
-
 export async function createClient(input: CreateClientInput): Promise<Client> {
 	try {
-		return await prisma.client.create({
+		return await insertWithCode("CLIENT", (clientCode) => prisma.client.create({
 			data: {
-				clientCode: await generateNextClientCode(),
+				clientCode,
 				name: input.name,
 				email: input.email,
 				phone: input.phone ?? null,
@@ -90,7 +69,7 @@ export async function createClient(input: CreateClientInput): Promise<Client> {
 				source: input.source ?? null,
 				lastContactAt: null,
 			},
-		});
+		}));
 	}
 	catch (error) {
 		if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
