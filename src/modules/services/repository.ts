@@ -119,10 +119,12 @@ export async function moveService(id: string, direction: "up" | "down"): Promise
 		throw new ValidationError("No service to swap with");
 	}
 
-	// Update sibling FIRST to avoid UNIQUE constraint violation on position.
-	// Postgres checks UNIQUE constraints immediately (not deferred), so we must
-	// free the target position before assigning it to the moving service.
+	// Postgres checks the non-deferrable Service_position_key index on every
+	// row write, so both rows can never hold the same position mid-swap. Park
+	// the moving row on a negative position first (live positions start at 1),
+	// then hand its slot to the sibling and take the target.
 	const result = await prisma.$transaction(async function(tx) {
+		await tx.service.update({ where: { id }, data: { position: -service.position } });
 		await tx.service.update({ where: { id: sibling.id }, data: { position: service.position } });
 		await tx.service.update({ where: { id }, data: { position: targetPosition } });
 		return tx.service.findUnique({ where: { id } });
