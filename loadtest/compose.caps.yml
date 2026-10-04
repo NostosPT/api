@@ -1,0 +1,19 @@
+# Per-container limits approximating the production app server (2 vCPU / 4 GB)
+# when Docker Desktop itself has more resources. run.sh applies this override
+# automatically when Docker reports more than 2 CPUs (LT_CAPS=auto).
+#
+# This is an approximation: in production the containers share the whole
+# 2 vCPU / 4 GB, so one can burst while the others are idle. For official
+# numbers, set Docker Desktop to 2 CPUs / 4 GB and run with LT_CAPS=off.
+# Shares are adjustable via env.
+services:
+  api:
+    cpus: ${LT_API_CPUS:-1.0}
+    mem_limit: ${LT_API_MEM:-1280m}
+  postgres:
+    cpus: ${LT_PG_CPUS:-0.75}
+    mem_limit: ${LT_PG_MEM:-1792m}
+    shm_size: 256m
+  seaweedfs:
+    cpus: ${LT_S3_CPUS:-0.25}
+    mem_limit: ${LT_S3_MEM:-768m}

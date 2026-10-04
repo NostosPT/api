@@ -18,3 +18,4 @@ compose*.yml
 eslint.config.mjs
 .prettierrc*
 prettier.config.*
+loadtest

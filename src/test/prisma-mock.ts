@@ -6,6 +6,8 @@
 // repository mapping is exercised realistically; a rejected write changes
 // nothing, and $transaction undoes its writes when the callback throws.
 // No PostgreSQL required.
+// repository mapping is exercised realistically. $queryRaw understands only
+// the CodeCounter bump in src/db/sequentialCodes.ts. No PostgreSQL required.
 
 interface P2002Error {
 	code: "P2002";
@@ -209,6 +211,7 @@ mock.gallery.rows.length = 0;
 	mock.photoTag.rows.length = 0;
 	mock.albumTag.rows.length = 0;
 	mock.purchasePhoto.rows.length = 0;
+	mock.codeCounter.rows.length = 0;
 }
 
 class MockModel {
@@ -451,6 +454,67 @@ class MockModel {
 	}
 }
 
+const LATENT_METHODS = [
+	"findUnique",
+	"findFirst",
+	"findMany",
+	"count",
+	"create",
+	"update",
+	"updateMany",
+	"delete",
+	"deleteMany",
+] as const;
+
+function nextTick(): Promise<void> {
+	return new Promise((resolve) => setImmediate(resolve));
+}
+
+// Real queries take a round trip, so concurrent requests interleave between a
+// read and the write that depends on it. The mock otherwise answers in the
+// same tick, which hides races. While enabled, every model call and $queryRaw
+// yields to the event loop before and after running; seed rows before
+// enabling. Returns a function that restores the instant behaviour.
+export function simulateLatency(mock: MockPrisma): () => void {
+	const models = Object.values(mock).filter((value): value is MockModel => value instanceof MockModel);
+	const queryRaw = mock.$queryRaw;
+
+	for (const model of models) {
+		for (const method of LATENT_METHODS) {
+			const original = model[method].bind(model) as (...args: never[]) => unknown;
+
+			Object.defineProperty(model, method, {
+				configurable: true,
+				value: async (...args: never[]) => {
+					await nextTick();
+					const result = original(...args);
+					await nextTick();
+
+					return result;
+				},
+			});
+		}
+	}
+
+	mock.$queryRaw = async <T>(query: TemplateStringsArray, ...values: unknown[]): Promise<T> => {
+		await nextTick();
+		const result = await queryRaw<T>(query, ...values);
+		await nextTick();
+
+		return result;
+	};
+
+	return () => {
+		for (const model of models) {
+			for (const method of LATENT_METHODS) {
+				delete (model as Partial<Record<(typeof LATENT_METHODS)[number], unknown>>)[method];
+			}
+		}
+
+		mock.$queryRaw = queryRaw;
+	};
+}
+
 export interface MockPrisma {
 	user: MockModel;
 	session: MockModel;
@@ -477,6 +541,8 @@ export interface MockPrisma {
 	photoCategory: MockModel;
 	photoTag: MockModel;
 	purchasePhoto: MockModel;
+	codeCounter: MockModel;
+	$queryRaw: <T>(query: TemplateStringsArray, ...values: unknown[]) => Promise<T>;
 	$transaction: <T>(fn: (tx: MockPrisma) => Promise<T>) => Promise<T>;
 }
 
@@ -581,9 +647,33 @@ export function createMockPrisma(): MockPrisma {
 		photoTag: new MockModel([["photoId", "tagId"]], []),
 		albumTag: new MockModel([["albumId", "tagId"]], []),
 		purchasePhoto: new MockModel([["purchaseId", "photoId"]], ["addedAt"]),
-		// All models share one row store. The callback gets a view that logs
-		// its own writes, so a throw undoes exactly those and nothing written
-		// by other requests meanwhile (like a real rollback).
+		codeCounter: new MockModel([["scope", "year"]], []),
+		// Mirrors INSERT ... ON CONFLICT DO UPDATE ... RETURNING: the bump runs
+		// synchronously, so concurrent callers each get a distinct value just
+		// like the row lock guarantees in PostgreSQL.
+		$queryRaw: async function $queryRaw<T>(query: TemplateStringsArray, ...values: unknown[]): Promise<T> {
+			const sql = query.join("?").replace(/\s+/g, " ").trim();
+
+			if (!sql.startsWith('INSERT INTO "CodeCounter"')) {
+				throw new Error(`prisma-mock: unsupported raw query: ${sql}`);
+			}
+
+			const [scope, year] = values as [string, number];
+			const existing = mock.codeCounter.rows.find((row) => row.scope === scope && row.year === year);
+
+			if (existing) {
+				existing.value = (existing.value as number) + 1;
+
+				return [{ value: existing.value }] as T;
+			}
+
+			// Pushed directly, not via create(), so the bump stays synchronous
+			// even while simulateLatency() wraps the model methods.
+			mock.codeCounter.rows.push({ scope, year, value: 1 });
+
+			return [{ value: 1 }] as T;
+		},
+		// All models share one row store, so the callback receives the same mock.
 		$transaction: async function $transaction<T>(fn: (tx: MockPrisma) => Promise<T>): Promise<T> {
 			const undo: UndoLog = [];
 
