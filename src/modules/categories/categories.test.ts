@@ -1,5 +1,5 @@
 import "../../test/env.js";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { createMockPrisma, resetMock, resetMockIds, type MockPrisma } from "../../test/prisma-mock.js";
 
@@ -40,6 +40,10 @@ beforeEach(async () => {
 	editorCookie = sessionCookie(await seedSession(mock, editor.id));
 	assistantCookie = sessionCookie(await seedSession(mock, assistant.id));
 	accountantCookie = sessionCookie(await seedSession(mock, accountant.id));
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
 });
 
 async function createCategory(cookie: string, name: string, slug: string) {
@@ -147,6 +151,68 @@ describe("category management", () => {
 		});
 
 		expect(belowBottom.statusCode).toBe(400);
+	});
+
+	it("moves across gaps left by deleted categories", async () => {
+		await createCategory(adminCookie, "Weddings", "weddings");
+		const middle = await createCategory(adminCookie, "Portraits", "portraits");
+		const last = await createCategory(adminCookie, "Families", "families");
+
+		const deleted = await app.inject({
+			method: "DELETE",
+			url: `/v1/categories/${middle.json().id as string}`,
+			headers: { cookie: adminCookie },
+		});
+
+		expect(deleted.statusCode).toBe(200);
+
+		const moved = await app.inject({
+			method: "POST",
+			url: `/v1/categories/${last.json().id as string}/move`,
+			headers: { cookie: adminCookie },
+			payload: { direction: "up" },
+		});
+
+		expect(moved.statusCode).toBe(200);
+		expect(moved.json().position).toBe(1);
+
+		const list = await app.inject({
+			method: "GET",
+			url: "/v1/categories",
+			headers: { cookie: adminCookie },
+		});
+
+		expect(list.json().items.map((category: { slug: string }) => category.slug)).toEqual(["families", "weddings"]);
+		expect(list.json().items.map((category: { position: number }) => category.position)).toEqual([1, 3]);
+	});
+
+	it("returns 409 and keeps the order when a concurrent move lands first", async () => {
+		const first = await createCategory(adminCookie, "Weddings", "weddings");
+		const second = await createCategory(adminCookie, "Portraits", "portraits");
+		const findFirst = mock.category.findFirst.bind(mock.category);
+
+		// The sibling is read, then another request moves it before the swap.
+		vi.spyOn(mock.category, "findFirst").mockImplementationOnce((args) => {
+			const sibling = findFirst(args);
+			const row = mock.category.rows.find((candidate) => candidate.id === first.json().id);
+
+			if (row) {
+				row.position = 5;
+			}
+
+			return sibling;
+		});
+
+		const moved = await app.inject({
+			method: "POST",
+			url: `/v1/categories/${second.json().id as string}/move`,
+			headers: { cookie: adminCookie },
+			payload: { direction: "up" },
+		});
+
+		expect(moved.statusCode).toBe(409);
+		expect(mock.category.rows.find((row) => row.id === second.json().id)?.position).toBe(2);
+		expect(auditActions(mock)).not.toContain("categories.move");
 	});
 
 	it("updates and deletes categories with audit records", async () => {

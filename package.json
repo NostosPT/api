@@ -22,7 +22,8 @@
 		"lint": "eslint src",
 		"lint:fix": "eslint src --fix",
 		"typecheck": "tsc --noEmit",
-		"test": "vitest run"
+		"test": "vitest run",
+		"version:bump": "node scripts/bump-version.js"
 	},
 	"repository": {
 		"type": "git",

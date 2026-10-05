@@ -1,7 +1,7 @@
 import "../../test/env.js";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { createMockPrisma, resetMock, resetMockIds, type MockPrisma } from "../../test/prisma-mock.js";
+import { createMockPrisma, resetMock, resetMockIds, simulateLatency, type MockPrisma } from "../../test/prisma-mock.js";
 
 const holder = { prisma: createMockPrisma() };
 
@@ -318,5 +318,48 @@ describe("client permission matrix", () => {
 		});
 
 		expect(assistantCreate.statusCode).toBe(201);
+	});
+});
+
+describe("client code generation", () => {
+	async function create(name: string, email: string) {
+		return app.inject({
+			method: "POST",
+			url: "/v1/clients",
+			headers: { cookie: adminCookie },
+			payload: { name, email },
+		});
+	}
+
+	it("keeps counting numerically past 999 instead of sorting codes as text", async () => {
+		// CLI-…-1000 sorts before CLI-…-999 as text; the counter must not care.
+		for (const code of [`CLI-${year}-998`, `CLI-${year}-999`, `CLI-${year}-1000`]) {
+			mock.client.create({ data: { clientCode: code, email: `${code.toLowerCase()}@nostos.photos`, name: code, status: "LEAD" } });
+		}
+		mock.codeCounter.create({ data: { scope: "CLIENT", year, value: 1000 } });
+
+		const first = await create("Ana Silva", "ana@nostos.photos");
+		const second = await create("Bruno Costa", "bruno@nostos.photos");
+
+		expect(first.statusCode).toBe(201);
+		expect(second.statusCode).toBe(201);
+		expect(first.json().clientCode).toBe(`CLI-${year}-1001`);
+		expect(second.json().clientCode).toBe(`CLI-${year}-1002`);
+	});
+
+	it("gives every concurrent creation its own code", async () => {
+		const count = 25;
+		const restore = simulateLatency(mock);
+		const responses = await Promise.all(
+			Array.from({ length: count }, (_, index) => create(`Client ${index}`, `client-${index}@nostos.photos`)),
+		).finally(restore);
+
+		expect(responses.map((response) => response.statusCode)).toEqual(Array(count).fill(201));
+
+		const codes = responses.map((response) => response.json().clientCode as string).sort();
+
+		expect(codes).toEqual(
+			Array.from({ length: count }, (_, index) => `CLI-${year}-${String(index + 1).padStart(3, "0")}`),
+		);
 	});
 });
