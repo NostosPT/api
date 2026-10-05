@@ -3,6 +3,9 @@
 // update/updateMany/delete/deleteMany) with equality, null, gt/lt/in/
 // startsWith/contains (with insensitive mode)/not matching, OR/AND where
 // clauses plus orderBy/skip/take. Unique violations mimic P2002 so
+// repository mapping is exercised realistically; a rejected write changes
+// nothing, and $transaction undoes its writes when the callback throws.
+// No PostgreSQL required.
 // repository mapping is exercised realistically. $queryRaw understands only
 // the CodeCounter bump in src/db/sequentialCodes.ts. No PostgreSQL required.
 
@@ -23,6 +26,19 @@ export { isP2002 };
 
 type Scalar = string | number | boolean | Date | null | undefined;
 type RecordRow = Record<string, Scalar>;
+// Inverse steps recorded by writes made through a transaction, replayed in
+// reverse when the callback throws.
+type UndoLog = (() => void)[];
+
+function restoreRow(row: RecordRow, previous: RecordRow): void {
+	for (const key of Object.keys(row)) {
+		if (!(key in previous)) {
+			delete row[key];
+		}
+	}
+
+	Object.assign(row, previous);
+}
 
 interface Operator {
 	gt?: Scalar;
@@ -299,7 +315,7 @@ class MockModel {
 		return this.rows.filter((row) => matchesWhere(row, args.where)).length;
 	}
 
-	create(args: { data: RecordRow; select?: Record<string, boolean> }): RecordRow {
+	create(args: { data: RecordRow; select?: Record<string, boolean> }, undo?: UndoLog): RecordRow {
 		const row: RecordRow = { ...args.data };
 
 		if (row.id === undefined) {
@@ -334,42 +350,73 @@ class MockModel {
 
 		this.checkUnique(row);
 		this.rows.push(row);
+		undo?.push(() => {
+			const index = this.rows.indexOf(row);
+
+			if (index !== -1) {
+				this.rows.splice(index, 1);
+			}
+		});
 
 		return this.project(row, args.select);
 	}
 
-	update(args: { where?: WhereInput; data: RecordRow }): RecordRow {
+	update(args: { where?: WhereInput; data: RecordRow }, undo?: UndoLog): RecordRow {
 		const row = this.rows.find((candidate) => matchesWhere(candidate, args.where));
 
 		if (!row) {
 			throw { code: "P2025" };
 		}
 
-		Object.assign(row, args.data);
+		const next: RecordRow = { ...row, ...args.data };
 
 		if ("updatedAt" in row) {
-			row.updatedAt = new Date();
+			next.updatedAt = new Date();
 		}
 
-		this.checkUnique(row, row);
+		// A rejected write leaves the row untouched, like the database does.
+		this.checkUnique(next, row);
+
+		const previous = { ...row };
+		Object.assign(row, next);
+		undo?.push(() => restoreRow(row, previous));
 
 		return { ...row };
 	}
 
-	updateMany(args: { where?: WhereInput; data: RecordRow }): { count: number } {
-		let count = 0;
+	// Rows are written one at a time and each is checked against the current
+	// state, matching PostgreSQL's per-row check on non-deferrable unique
+	// indexes. A violation reverts the whole statement.
+	updateMany(args: { where?: WhereInput; data: RecordRow }, undo?: UndoLog): { count: number } {
+		const written: { row: RecordRow; previous: RecordRow }[] = [];
 
-		for (const row of this.rows) {
-			if (matchesWhere(row, args.where)) {
-				Object.assign(row, args.data);
-				count += 1;
+		try {
+			for (const row of this.rows) {
+				if (matchesWhere(row, args.where)) {
+					this.checkUnique({ ...row, ...args.data }, row);
+					written.push({ row, previous: { ...row } });
+					Object.assign(row, args.data);
+				}
 			}
 		}
+		catch (error) {
+			for (const { row, previous } of written.reverse()) {
+				restoreRow(row, previous);
+			}
 
-		return { count };
+			throw error;
+		}
+
+		undo?.push(() => {
+			for (const { row, previous } of [...written].reverse()) {
+				restoreRow(row, previous);
+			}
+		});
+
+		return { count: written.length };
 	}
 
-	delete(args: { where?: WhereInput }): RecordRow {
+	delete(args: { where?: WhereInput }, undo?: UndoLog): RecordRow {
 		const index = this.rows.findIndex((row) => matchesWhere(row, args.where));
 
 		if (index === -1) {
@@ -377,15 +424,17 @@ class MockModel {
 		}
 
 		const [removed] = this.rows.splice(index, 1);
+		undo?.push(() => this.rows.splice(Math.min(index, this.rows.length), 0, removed));
 
 		return { ...removed };
 	}
 
-	deleteMany(args: { where?: WhereInput }): { count: number } {
-		const before = this.rows.length;
+	deleteMany(args: { where?: WhereInput }, undo?: UndoLog): { count: number } {
+		const removed = this.rows.filter((row) => matchesWhere(row, args.where));
 		this.rows = this.rows.filter((row) => !matchesWhere(row, args.where));
+		undo?.push(() => this.rows.push(...removed));
 
-		return { count: before - this.rows.length };
+		return { count: removed.length };
 	}
 
 	private project(row: RecordRow, select?: Record<string, boolean>): RecordRow {
@@ -626,9 +675,59 @@ export function createMockPrisma(): MockPrisma {
 		},
 		// All models share one row store, so the callback receives the same mock.
 		$transaction: async function $transaction<T>(fn: (tx: MockPrisma) => Promise<T>): Promise<T> {
-			return fn(mock);
+			const undo: UndoLog = [];
+
+			try {
+				return await fn(transactionView(mock, undo));
+			}
+			catch (error) {
+				for (const step of undo.reverse()) {
+					step();
+				}
+
+				throw error;
+			}
 		},
 	};
 
 	return mock;
+}
+
+const WRITE_METHODS = new Set<PropertyKey>(["create", "update", "updateMany", "delete", "deleteMany"]);
+
+function transactionView(mock: MockPrisma, undo: UndoLog): MockPrisma {
+	const views = new Map<MockModel, MockModel>();
+
+	return new Proxy(mock, {
+		get(target, property, receiver) {
+			const value: unknown = Reflect.get(target, property, receiver);
+
+			if (!(value instanceof MockModel)) {
+				return value;
+			}
+
+			let view = views.get(value);
+
+			if (view === undefined) {
+				view = new Proxy(value, {
+					get(model, key) {
+						const member: unknown = Reflect.get(model, key, model);
+
+						if (typeof member !== "function") {
+							return member;
+						}
+
+						if (WRITE_METHODS.has(key)) {
+							return (args: unknown) => (member as (args: unknown, undo: UndoLog) => unknown).call(model, args, undo);
+						}
+
+						return (member as (...args: unknown[]) => unknown).bind(model);
+					},
+				});
+				views.set(value, view);
+			}
+
+			return view;
+		},
+	});
 }
