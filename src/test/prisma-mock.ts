@@ -1,6 +1,6 @@
 // In-memory Prisma stand-in for inject() tests. Implements exactly the
 // operations repositories use (findUnique/findFirst/findMany/count/create/
-// update/updateMany/delete/deleteMany) with equality, null, gt/lt/in/
+// createMany/update/updateMany/delete/deleteMany) with equality, null, gt/lt/in/
 // startsWith/contains (with insensitive mode)/not matching, OR/AND where
 // clauses plus orderBy/skip/take. Unique violations mimic P2002 so
 // repository mapping is exercised realistically; a rejected write changes
@@ -411,7 +411,7 @@ class MockModel {
 			}
 		});
 
-		return this.project(row, args.select);
+		return row;
 	}
 
 	update(args: { where?: WhereInput; data: RecordRow }, undo?: UndoLog): RecordRow {

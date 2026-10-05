@@ -288,6 +288,28 @@ describe("purchase status transitions", () => {
 
 		expect(failedToCompleted.statusCode).toBe(400);
 	});
+
+	it("materializes ALBUM membership on completion with one bulk insert", async () => {
+		const created = await createPurchase(adminCookie, { clientId, albumId, scope: "ALBUM", priceCents: 120000 });
+		const id = created.json().id as string;
+		const createMany = vi.spyOn(mock.purchasePhoto, "createMany");
+		const create = vi.spyOn(mock.purchasePhoto, "create");
+
+		const completed = await app.inject({
+			method: "PATCH",
+			url: `/v1/purchases/${id}`,
+			headers: { cookie: adminCookie },
+			payload: { status: "COMPLETED" },
+		});
+
+		expect(completed.statusCode).toBe(200);
+		expect(completed.json().items.map((item: { photoId: string }) => item.photoId)).toEqual([photoA, photoB]);
+		expect(createMany).toHaveBeenCalledTimes(1);
+		expect(create).not.toHaveBeenCalled();
+
+		createMany.mockRestore();
+		create.mockRestore();
+	});
 });
 
 describe("purchase listing and permission matrix", () => {

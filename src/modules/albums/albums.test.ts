@@ -271,6 +271,55 @@ describe("album photo membership", () => {
 
 		expect(notMember.statusCode).toBe(404);
 	});
+
+	it("replaces a large membership with one bulk insert in the given order", async () => {
+		const created = await createAlbum(adminCookie, { clientId, title: "Bulk", type: "PAID", priceCents: 1000 });
+		const id = created.json().id as string;
+		const photoIds = Array.from({ length: 150 }, (_, index) => seedPhoto(`originals/bulk-${index}.jpg`));
+
+		await app.inject({
+			method: "PUT",
+			url: `/v1/albums/${id}/photos`,
+			headers: { cookie: adminCookie },
+			payload: { photoIds: photoIds.slice(0, 3) },
+		});
+
+		await app.inject({
+			method: "PATCH",
+			url: `/v1/albums/${id}/photos/${photoIds[0]}`,
+			headers: { cookie: adminCookie },
+			payload: { isPreview: false },
+		});
+
+		const createMany = vi.spyOn(mock.albumPhoto, "createMany");
+		const create = vi.spyOn(mock.albumPhoto, "create");
+		const reordered = [...photoIds].reverse();
+
+		const replaced = await app.inject({
+			method: "PUT",
+			url: `/v1/albums/${id}/photos`,
+			headers: { cookie: adminCookie },
+			payload: { photoIds: reordered },
+		});
+
+		expect(replaced.statusCode).toBe(200);
+		expect(replaced.json().photoIds).toEqual(reordered);
+		expect(createMany).toHaveBeenCalledTimes(1);
+		expect(create).not.toHaveBeenCalled();
+
+		const rows = mock.albumPhoto.rows.filter((row) => row.albumId === id);
+
+		expect(rows).toHaveLength(150);
+		expect(rows.map((row) => row.position).sort((a, b) => Number(a) - Number(b)))
+			.toEqual(Array.from({ length: 150 }, (_, index) => index + 1));
+		expect(rows.find((row) => row.photoId === reordered[0])?.position).toBe(1);
+		expect(rows.find((row) => row.photoId === reordered[149])?.position).toBe(150);
+		// Replacement resets per-photo flags to the default.
+		expect(rows.every((row) => row.isPreview === true)).toBe(true);
+
+		createMany.mockRestore();
+		create.mockRestore();
+	});
 });
 
 describe("album publishing and access codes", () => {
