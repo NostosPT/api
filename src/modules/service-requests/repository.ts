@@ -1,11 +1,11 @@
 import { Prisma } from "@prisma/client";
 import type { ServiceRequest, ServiceRequestStage, LeadSource, Client } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
+import { insertWithCode } from "../../db/sequentialCodes.js";
 import { ConflictError } from "../../errors/appError.js";
-import { generateNextClientCode } from "../clients/repository.js";
 
+// reference is generated on insert (REQ-<year>-NNN), never supplied by callers.
 export interface CreateServiceRequestInput {
-	reference: string;
 	title: string;
 	clientId: string;
 	serviceId?: string | null;
@@ -90,7 +90,7 @@ export async function findClientByEmail(email: string) {
 }
 
 export async function createClient(input: { email: string; name: string; phone?: string | null; company?: string | null; notes?: string | null; taxId?: string | null; address?: string | null; source: "WEBSITE" | "EMAIL" | "REFERRAL" | "INSTAGRAM" | "ARCHIVE"; status: "LEAD" | "ACTIVE" | "PAST" }): Promise<Client> {
-	return prisma.client.create({
+	return insertWithCode("CLIENT", (clientCode) => prisma.client.create({
 		data: {
 			email: input.email,
 			name: input.name,
@@ -104,16 +104,16 @@ export async function createClient(input: { email: string; name: string; phone?:
 			lastContactAt: new Date(),
 			createdAt: new Date(),
 			updatedAt: new Date(),
-			clientCode: await generateNextClientCode(),
+			clientCode,
 		},
-	});
+	}));
 }
 
 export async function createRequest(input: CreateServiceRequestInput): Promise<ServiceRequest> {
 	try {
-		return await prisma.serviceRequest.create({
+		return await insertWithCode("SERVICE_REQUEST", (reference) => prisma.serviceRequest.create({
 			data: {
-				reference: input.reference,
+				reference,
 				title: input.title,
 				clientId: input.clientId,
 				serviceId: input.serviceId ?? null,
@@ -134,7 +134,7 @@ export async function createRequest(input: CreateServiceRequestInput): Promise<S
 				answers: input.answers ?? {},
 				referenceKeys: input.referenceKeys ?? [],
 			},
-		});
+		}));
 	}
 	catch (error) {
 		if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -208,28 +208,6 @@ export async function getRequestNotes(requestId: string) {
 		where: { requestId },
 		orderBy: { createdAt: "asc" },
 	});
-}
-
-export async function generateNextReference(): Promise<string> {
-	const year = new Date().getFullYear();
-	const prefix = `REQ-${year}-`;
-
-	const lastRequest = await prisma.serviceRequest.findFirst({
-		where: { reference: { startsWith: prefix } },
-		orderBy: { reference: "desc" },
-		select: { reference: true },
-	});
-
-	let nextNumber = 1;
-
-	if (lastRequest) {
-		const match = lastRequest.reference.match(new RegExp(`^${prefix}(\\d+)$`));
-		if (match) {
-			nextNumber = parseInt(match[1], 10) + 1;
-		}
-	}
-
-	return `${prefix}${nextNumber.toString().padStart(3, "0")}`;
 }
 
 export async function findClientById(id: string) {

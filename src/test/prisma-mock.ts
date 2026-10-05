@@ -1,9 +1,13 @@
 // In-memory Prisma stand-in for inject() tests. Implements exactly the
 // operations repositories use (findUnique/findFirst/findMany/count/create/
-// update/updateMany/delete/deleteMany) with equality, null, gt/lt/in/
+// createMany/update/updateMany/delete/deleteMany) with equality, null, gt/lt/in/
 // startsWith/contains (with insensitive mode)/not matching, OR/AND where
 // clauses plus orderBy/skip/take. Unique violations mimic P2002 so
-// repository mapping is exercised realistically. No PostgreSQL required.
+// repository mapping is exercised realistically; a rejected write changes
+// nothing, and $transaction undoes its writes when the callback throws.
+// No PostgreSQL required.
+// repository mapping is exercised realistically. $queryRaw understands only
+// the CodeCounter bump in src/db/sequentialCodes.ts. No PostgreSQL required.
 
 interface P2002Error {
 	code: "P2002";
@@ -22,6 +26,19 @@ export { isP2002 };
 
 type Scalar = string | number | boolean | Date | null | undefined;
 type RecordRow = Record<string, Scalar>;
+// Inverse steps recorded by writes made through a transaction, replayed in
+// reverse when the callback throws.
+type UndoLog = (() => void)[];
+
+function restoreRow(row: RecordRow, previous: RecordRow): void {
+	for (const key of Object.keys(row)) {
+		if (!(key in previous)) {
+			delete row[key];
+		}
+	}
+
+	Object.assign(row, previous);
+}
 
 interface Operator {
 	gt?: Scalar;
@@ -61,6 +78,14 @@ function compareValues(actual: Scalar, expected: Scalar): number {
 
 function matchesCondition(actual: Scalar, condition: Condition): boolean {
 	if (isOperator(condition)) {
+		const isRange =
+			condition.gt !== undefined || condition.lt !== undefined || condition.gte !== undefined || condition.lte !== undefined;
+
+		// SQL comparisons with NULL are never true.
+		if (isRange && (actual === null || actual === undefined)) {
+			return false;
+		}
+
 		if (condition.gt !== undefined && compareValues(actual, condition.gt) <= 0) {
 			return false;
 		}
@@ -117,22 +142,65 @@ function matchesCondition(actual: Scalar, condition: Condition): boolean {
 	return compareValues(actual, condition) === 0;
 }
 
-function matchesWhere(row: RecordRow, where?: WhereInput): boolean {
+// A relation joins `from` on this model to `to` on the target model, like the
+// foreign keys in schema.prisma (e.g. Photo.id -> GalleryPhoto.photoId).
+interface Relation {
+	kind: "many" | "one";
+	target: MockModel;
+	from: string;
+	to: string;
+}
+
+interface ManyRelationFilter {
+	some?: WhereInput;
+	none?: WhereInput;
+	every?: WhereInput;
+}
+
+function matchesRelation(row: RecordRow, relation: Relation, filter: WhereInput): boolean {
+	const key = row[relation.from];
+	const related =
+		key === null || key === undefined
+			? []
+			: relation.target.rows.filter((candidate) => compareValues(candidate[relation.to], key) === 0);
+	const matches = (candidate: RecordRow, clause?: WhereInput): boolean =>
+		matchesWhere(candidate, clause, relation.target);
+
+	if (relation.kind === "one") {
+		return related.length > 0 && matches(related[0], filter);
+	}
+
+	const { some, none, every } = filter as ManyRelationFilter;
+
+	return (
+		(some === undefined || related.some((candidate) => matches(candidate, some))) &&
+		(none === undefined || !related.some((candidate) => matches(candidate, none))) &&
+		(every === undefined || related.every((candidate) => matches(candidate, every)))
+	);
+}
+
+function matchesWhere(row: RecordRow, where?: WhereInput, model?: MockModel): boolean {
 	if (!where) {
 		return true;
 	}
 
 	return Object.entries(where).every(([field, condition]) => {
 		if (field === "OR" && Array.isArray(condition)) {
-			return condition.some((clause) => matchesWhere(row, clause));
+			return condition.some((clause) => matchesWhere(row, clause, model));
 		}
 
 		if (field === "AND" && Array.isArray(condition)) {
-			return condition.every((clause) => matchesWhere(row, clause));
+			return condition.every((clause) => matchesWhere(row, clause, model));
 		}
 
 		if (Array.isArray(condition)) {
 			return false;
+		}
+
+		const relation = model?.relations[field];
+
+		if (relation !== undefined) {
+			return matchesRelation(row, relation, condition as unknown as WhereInput);
 		}
 
 		return matchesCondition(row[field], condition);
@@ -194,6 +262,7 @@ mock.gallery.rows.length = 0;
 	mock.photoTag.rows.length = 0;
 	mock.albumTag.rows.length = 0;
 	mock.purchasePhoto.rows.length = 0;
+	mock.codeCounter.rows.length = 0;
 }
 
 class MockModel {
@@ -208,6 +277,8 @@ class MockModel {
 	// Integer columns with @default(autoincrement()); the mock fills the next
 	// value from existing rows exactly like the sequence would.
 	autoIncrementFields: string[];
+	// Relation fields usable in where clauses; registered in createMockPrisma.
+	relations: Record<string, Relation> = {};
 
 	constructor(
 		uniqueFields: string[][] = [],
@@ -244,7 +315,7 @@ class MockModel {
 	}
 
 	findUnique(args: { where: WhereInput; select?: Record<string, boolean> }): RecordRow | null {
-		const found = this.rows.find((row) => matchesWhere(row, args.where)) ?? null;
+		const found = this.rows.find((row) => matchesWhere(row, args.where, this)) ?? null;
 
 		if (found === null) {
 			return null;
@@ -272,7 +343,7 @@ class MockModel {
 	}
 
 	private applyFindMany(args: FindManyArgs): RecordRow[] {
-		let result = this.rows.filter((row) => matchesWhere(row, args.where));
+		let result = this.rows.filter((row) => matchesWhere(row, args.where, this));
 
 		const orderClauses = args.orderBy === undefined ? [] : Array.isArray(args.orderBy) ? args.orderBy : [args.orderBy];
 
@@ -294,10 +365,10 @@ class MockModel {
 	}
 
 	count(args: { where?: WhereInput } = {}): number {
-		return this.rows.filter((row) => matchesWhere(row, args.where)).length;
+		return this.rows.filter((row) => matchesWhere(row, args.where, this)).length;
 	}
 
-	create(args: { data: RecordRow; select?: Record<string, boolean> }): RecordRow {
+	create(args: { data: RecordRow; select?: Record<string, boolean> }, undo?: UndoLog): RecordRow {
 		const row: RecordRow = { ...args.data };
 
 		if (row.id === undefined) {
@@ -332,42 +403,73 @@ class MockModel {
 
 		this.checkUnique(row);
 		this.rows.push(row);
+		undo?.push(() => {
+			const index = this.rows.indexOf(row);
 
-		return this.project(row, args.select);
+			if (index !== -1) {
+				this.rows.splice(index, 1);
+			}
+		});
+
+		return row;
 	}
 
-	update(args: { where?: WhereInput; data: RecordRow }): RecordRow {
+	update(args: { where?: WhereInput; data: RecordRow }, undo?: UndoLog): RecordRow {
 		const row = this.rows.find((candidate) => matchesWhere(candidate, args.where));
 
 		if (!row) {
 			throw { code: "P2025" };
 		}
 
-		Object.assign(row, args.data);
+		const next: RecordRow = { ...row, ...args.data };
 
 		if ("updatedAt" in row) {
-			row.updatedAt = new Date();
+			next.updatedAt = new Date();
 		}
 
-		this.checkUnique(row, row);
+		// A rejected write leaves the row untouched, like the database does.
+		this.checkUnique(next, row);
+
+		const previous = { ...row };
+		Object.assign(row, next);
+		undo?.push(() => restoreRow(row, previous));
 
 		return { ...row };
 	}
 
-	updateMany(args: { where?: WhereInput; data: RecordRow }): { count: number } {
-		let count = 0;
+	// Rows are written one at a time and each is checked against the current
+	// state, matching PostgreSQL's per-row check on non-deferrable unique
+	// indexes. A violation reverts the whole statement.
+	updateMany(args: { where?: WhereInput; data: RecordRow }, undo?: UndoLog): { count: number } {
+		const written: { row: RecordRow; previous: RecordRow }[] = [];
 
-		for (const row of this.rows) {
-			if (matchesWhere(row, args.where)) {
-				Object.assign(row, args.data);
-				count += 1;
+		try {
+			for (const row of this.rows) {
+				if (matchesWhere(row, args.where)) {
+					this.checkUnique({ ...row, ...args.data }, row);
+					written.push({ row, previous: { ...row } });
+					Object.assign(row, args.data);
+				}
 			}
 		}
+		catch (error) {
+			for (const { row, previous } of written.reverse()) {
+				restoreRow(row, previous);
+			}
 
-		return { count };
+			throw error;
+		}
+
+		undo?.push(() => {
+			for (const { row, previous } of [...written].reverse()) {
+				restoreRow(row, previous);
+			}
+		});
+
+		return { count: written.length };
 	}
 
-	delete(args: { where?: WhereInput }): RecordRow {
+	delete(args: { where?: WhereInput }, undo?: UndoLog): RecordRow {
 		const index = this.rows.findIndex((row) => matchesWhere(row, args.where));
 
 		if (index === -1) {
@@ -375,15 +477,17 @@ class MockModel {
 		}
 
 		const [removed] = this.rows.splice(index, 1);
+		undo?.push(() => this.rows.splice(Math.min(index, this.rows.length), 0, removed));
 
 		return { ...removed };
 	}
 
-	deleteMany(args: { where?: WhereInput }): { count: number } {
-		const before = this.rows.length;
+	deleteMany(args: { where?: WhereInput }, undo?: UndoLog): { count: number } {
+		const removed = this.rows.filter((row) => matchesWhere(row, args.where));
 		this.rows = this.rows.filter((row) => !matchesWhere(row, args.where));
+		undo?.push(() => this.rows.push(...removed));
 
-		return { count: before - this.rows.length };
+		return { count: removed.length };
 	}
 
 	private project(row: RecordRow, select?: Record<string, boolean>): RecordRow {
@@ -401,6 +505,67 @@ class MockModel {
 
 		return projected;
 	}
+}
+
+const LATENT_METHODS = [
+	"findUnique",
+	"findFirst",
+	"findMany",
+	"count",
+	"create",
+	"update",
+	"updateMany",
+	"delete",
+	"deleteMany",
+] as const;
+
+function nextTick(): Promise<void> {
+	return new Promise((resolve) => setImmediate(resolve));
+}
+
+// Real queries take a round trip, so concurrent requests interleave between a
+// read and the write that depends on it. The mock otherwise answers in the
+// same tick, which hides races. While enabled, every model call and $queryRaw
+// yields to the event loop before and after running; seed rows before
+// enabling. Returns a function that restores the instant behaviour.
+export function simulateLatency(mock: MockPrisma): () => void {
+	const models = Object.values(mock).filter((value): value is MockModel => value instanceof MockModel);
+	const queryRaw = mock.$queryRaw;
+
+	for (const model of models) {
+		for (const method of LATENT_METHODS) {
+			const original = model[method].bind(model) as (...args: never[]) => unknown;
+
+			Object.defineProperty(model, method, {
+				configurable: true,
+				value: async (...args: never[]) => {
+					await nextTick();
+					const result = original(...args);
+					await nextTick();
+
+					return result;
+				},
+			});
+		}
+	}
+
+	mock.$queryRaw = async <T>(query: TemplateStringsArray, ...values: unknown[]): Promise<T> => {
+		await nextTick();
+		const result = await queryRaw<T>(query, ...values);
+		await nextTick();
+
+		return result;
+	};
+
+	return () => {
+		for (const model of models) {
+			for (const method of LATENT_METHODS) {
+				delete (model as Partial<Record<(typeof LATENT_METHODS)[number], unknown>>)[method];
+			}
+		}
+
+		mock.$queryRaw = queryRaw;
+	};
 }
 
 export interface MockPrisma {
@@ -429,6 +594,8 @@ export interface MockPrisma {
 	photoCategory: MockModel;
 	photoTag: MockModel;
 	purchasePhoto: MockModel;
+	codeCounter: MockModel;
+	$queryRaw: <T>(query: TemplateStringsArray, ...values: unknown[]) => Promise<T>;
 	$transaction: <T>(fn: (tx: MockPrisma) => Promise<T>) => Promise<T>;
 }
 
@@ -533,11 +700,104 @@ export function createMockPrisma(): MockPrisma {
 		photoTag: new MockModel([["photoId", "tagId"]], []),
 		albumTag: new MockModel([["albumId", "tagId"]], []),
 		purchasePhoto: new MockModel([["purchaseId", "photoId"]], ["addedAt"]),
+		codeCounter: new MockModel([["scope", "year"]], []),
+		// Mirrors INSERT ... ON CONFLICT DO UPDATE ... RETURNING: the bump runs
+		// synchronously, so concurrent callers each get a distinct value just
+		// like the row lock guarantees in PostgreSQL.
+		$queryRaw: async function $queryRaw<T>(query: TemplateStringsArray, ...values: unknown[]): Promise<T> {
+			const sql = query.join("?").replace(/\s+/g, " ").trim();
+
+			if (!sql.startsWith('INSERT INTO "CodeCounter"')) {
+				throw new Error(`prisma-mock: unsupported raw query: ${sql}`);
+			}
+
+			const [scope, year] = values as [string, number];
+			const existing = mock.codeCounter.rows.find((row) => row.scope === scope && row.year === year);
+
+			if (existing) {
+				existing.value = (existing.value as number) + 1;
+
+				return [{ value: existing.value }] as T;
+			}
+
+			// Pushed directly, not via create(), so the bump stays synchronous
+			// even while simulateLatency() wraps the model methods.
+			mock.codeCounter.rows.push({ scope, year, value: 1 });
+
+			return [{ value: 1 }] as T;
+		},
 		// All models share one row store, so the callback receives the same mock.
 		$transaction: async function $transaction<T>(fn: (tx: MockPrisma) => Promise<T>): Promise<T> {
-			return fn(mock);
+			const undo: UndoLog = [];
+
+			try {
+				return await fn(transactionView(mock, undo));
+			}
+			catch (error) {
+				for (const step of undo.reverse()) {
+					step();
+				}
+
+				throw error;
+			}
 		},
 	};
 
+	// Relations used by repository where clauses (mirrors schema.prisma).
+	mock.photo.relations = {
+		galleryEntries: { kind: "many", target: mock.galleryPhoto, from: "id", to: "photoId" },
+		categories: { kind: "many", target: mock.photoCategory, from: "id", to: "photoId" },
+		tags: { kind: "many", target: mock.photoTag, from: "id", to: "photoId" },
+	};
+	mock.galleryPhoto.relations = {
+		gallery: { kind: "one", target: mock.gallery, from: "galleryId", to: "id" },
+		photo: { kind: "one", target: mock.photo, from: "photoId", to: "id" },
+	};
+	mock.photoCategory.relations = {
+		category: { kind: "one", target: mock.category, from: "categoryId", to: "id" },
+	};
+	mock.photoTag.relations = {
+		tag: { kind: "one", target: mock.tag, from: "tagId", to: "id" },
+	};
+
 	return mock;
+}
+
+const WRITE_METHODS = new Set<PropertyKey>(["create", "update", "updateMany", "delete", "deleteMany"]);
+
+function transactionView(mock: MockPrisma, undo: UndoLog): MockPrisma {
+	const views = new Map<MockModel, MockModel>();
+
+	return new Proxy(mock, {
+		get(target, property, receiver) {
+			const value: unknown = Reflect.get(target, property, receiver);
+
+			if (!(value instanceof MockModel)) {
+				return value;
+			}
+
+			let view = views.get(value);
+
+			if (view === undefined) {
+				view = new Proxy(value, {
+					get(model, key) {
+						const member: unknown = Reflect.get(model, key, model);
+
+						if (typeof member !== "function") {
+							return member;
+						}
+
+						if (WRITE_METHODS.has(key)) {
+							return (args: unknown) => (member as (args: unknown, undo: UndoLog) => unknown).call(model, args, undo);
+						}
+
+						return (member as (...args: unknown[]) => unknown).bind(model);
+					},
+				});
+				views.set(value, view);
+			}
+
+			return view;
+		},
+	});
 }
