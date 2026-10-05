@@ -4,8 +4,10 @@
 //
 // NOTE (migration): `citext` columns require the extension in the database
 // (`CREATE EXTENSION IF NOT EXISTS citext;`) before the initial migration.
-// NOTE (migration): trigram GIN search indexes and partial public-listing
-// indexes cannot be expressed in Prisma schema and belong in migration SQL.
+// NOTE (migration): trigram GIN search indexes are declared below with
+// `ops: raw("gin_trgm_ops")` so migrate diff keeps them (pg_trgm is created
+// in 0001_init). Partial indexes cannot be expressed in Prisma schema and
+// live in migration SQL only; Prisma ignores them when diffing.
 
 generator client {
   provider = "prisma-client-js"
@@ -241,12 +243,27 @@ model Invite {
 }
 
 // ---------------------------------------------------------------------------
+// Generated codes — per-year counters behind CLI-/REQ- codes
+// ---------------------------------------------------------------------------
+
+// Bumped atomically by src/db/sequentialCodes.ts (INSERT ... ON CONFLICT DO
+// UPDATE ... RETURNING), so concurrent inserts never draw the same number.
+// value is the last number issued for (scope, year); only ever move it forward.
+model CodeCounter {
+  scope String // CLIENT | SERVICE_REQUEST
+  year  Int
+  value Int
+
+  @@id([scope, year])
+}
+
+// ---------------------------------------------------------------------------
 // Clients — one record per account, never an auth identity
 // ---------------------------------------------------------------------------
 
 model Client {
   id            String       @id @default(uuid()) @db.Uuid
-  clientCode    String       @unique // auto-generated, e.g. CLI-2026-001
+  clientCode    String       @unique // auto-generated, e.g. CLI-2026-001 (CodeCounter)
   email         String       @unique @db.Citext // NOT NULL UNIQUE, normalized pre-write
   name          String
   phone         String?
@@ -267,8 +284,8 @@ model Client {
   favorites Favorite[]
   purchases Purchase[]
 
-  // name search uses a trigram GIN index added in migration SQL
   @@index([status, updatedAt])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Client_name_trgm_idx")
 }
 
 model ClientActivity {
@@ -311,7 +328,7 @@ model Service {
 // without an identified client are not supported.
 model ServiceRequest {
   id               String              @id @default(uuid()) @db.Uuid
-  reference        String              @unique // e.g. REQ-2026-031, transactional sequence
+  reference        String              @unique // e.g. REQ-2026-031 (CodeCounter)
   title            String
   clientId         String              @db.Uuid
   client           Client              @relation(fields: [clientId], references: [id], onDelete: Restrict)
@@ -462,8 +479,12 @@ model Photo {
   atlasEntries    AtlasLocationPhoto[]
   atlasCovers     AtlasLocation[] @relation("AtlasCover")
 
-  // public listing reads (status, visibility); trigram name/title search in migration SQL
+  // public listing reads (status, visibility); trigram indexes back the
+  // public `q` search, which matches title OR description (both must be
+  // indexed for a BitmapOr plan)
   @@index([status, visibility, createdAt(sort: Desc)])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "Photo_title_trgm_idx")
+  @@index([description(ops: raw("gin_trgm_ops"))], type: Gin, map: "Photo_description_trgm_idx")
   @@index([photographerId])
   @@index([availability])
 }

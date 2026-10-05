@@ -1,7 +1,7 @@
 import "../../test/env.js";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { createMockPrisma, resetMock, resetMockIds, type MockPrisma } from "../../test/prisma-mock.js";
+import { createMockPrisma, resetMock, resetMockIds, simulateLatency, type MockPrisma } from "../../test/prisma-mock.js";
 
 const holder = { prisma: createMockPrisma() };
 
@@ -223,5 +223,69 @@ describe("staff request management", () => {
 		});
 
 		expect(accountantWrite.statusCode).toBe(403);
+	});
+});
+
+describe("reference generation", () => {
+	function seedRequest(reference: string): void {
+		const client = mock.client.rows[0] ?? mock.client.create({
+			data: { clientCode: `CLI-${year}-900`, email: "seed@nostos.photos", name: "Seed", status: "LEAD" },
+		});
+
+		mock.serviceRequest.create({
+			data: { reference, title: "Seed", clientId: client.id, stage: "NEW", locationUndecided: false },
+		});
+	}
+
+	async function submit(email: string) {
+		return app.inject({
+			method: "POST",
+			url: "/v1/service-requests",
+			payload: { service: "wedding-photography", contact: { name: "Ana", email } },
+		});
+	}
+
+	it("keeps counting numerically past 999 instead of sorting references as text", async () => {
+		// REQ-…-1000 sorts before REQ-…-999 as text; the counter must not care.
+		seedRequest(`REQ-${year}-998`);
+		seedRequest(`REQ-${year}-999`);
+		seedRequest(`REQ-${year}-1000`);
+		mock.codeCounter.create({ data: { scope: "SERVICE_REQUEST", year, value: 1000 } });
+
+		const first = await submit("first@nostos.photos");
+		const second = await submit("second@nostos.photos");
+
+		expect(first.statusCode).toBe(201);
+		expect(second.statusCode).toBe(201);
+		expect(first.json().reference).toBe(`REQ-${year}-1001`);
+		expect(second.json().reference).toBe(`REQ-${year}-1002`);
+	});
+
+	it("skips numbers already taken by rows the counter has not seen", async () => {
+		seedRequest(`REQ-${year}-001`);
+		seedRequest(`REQ-${year}-002`);
+
+		const response = await submit("late@nostos.photos");
+
+		expect(response.statusCode).toBe(201);
+		expect(response.json().reference).toBe(`REQ-${year}-003`);
+		expect(mock.codeCounter.rows.find((row) => row.scope === "SERVICE_REQUEST")?.value).toBe(3);
+	});
+
+	it("gives every concurrent submission its own reference and client code", async () => {
+		const count = 25;
+		const restore = simulateLatency(mock);
+		const responses = await Promise.all(
+			Array.from({ length: count }, (_, index) => submit(`concurrent-${index}@nostos.photos`)),
+		).finally(restore);
+
+		expect(responses.map((response) => response.statusCode)).toEqual(Array(count).fill(201));
+
+		const expected = Array.from({ length: count }, (_, index) => String(index + 1).padStart(3, "0"));
+		const references = responses.map((response) => response.json().reference as string).sort();
+		const clientCodes = mock.client.rows.map((row) => row.clientCode as string).sort();
+
+		expect(references).toEqual(expected.map((number) => `REQ-${year}-${number}`));
+		expect(clientCodes).toEqual(expected.map((number) => `CLI-${year}-${number}`));
 	});
 });
