@@ -42,3 +42,41 @@ jobs:
 
       - name: Run ESLint
         run: pnpm lint
+
+  version:
+    name: Bump version
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(release):')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Bump version
+        id: bump
+        run: node scripts/bump-version.js patch
+
+      - name: Commit and tag new version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B main
+          git add package.json src/config/api-version.ts
+          if ! git diff --staged --quiet; then
+            git commit -m "chore(release): bump version to ${VERSION}"
+            git tag "v${VERSION}"
+            git pull --rebase origin main
+            git push origin main --tags
+          fi
