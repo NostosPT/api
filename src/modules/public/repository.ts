@@ -1,23 +1,6 @@
 import type { Prisma, AtlasLocation, Category, Gallery, Photo, Tag } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 
-export interface PublicPhotoWhere {
-	number?: number;
-	status?: "PUBLISHED";
-	visibility?: "PUBLIC";
-	availability?: Photo["availability"];
-	takenAt?: { gte?: Date; lte?: Date };
-	OR?: Array<{
-		title?: { contains: string; mode: "insensitive" };
-		description?: { contains: string; mode: "insensitive" };
-		number?: number;
-	}>;
-}
-
-function basePhotoWhere(): PublicPhotoWhere {
-	return { status: "PUBLISHED", visibility: "PUBLIC" };
-}
-
 export async function findPublishedGalleries(): Promise<Gallery[]> {
 	return prisma.gallery.findMany({
 		where: { status: "PUBLISHED" },
@@ -52,96 +35,88 @@ export async function findPhotosByIdsPublic(ids: string[]): Promise<Photo[]> {
 	});
 }
 
-export async function findPublishedGalleryIds(): Promise<string[]> {
-	const galleries = await prisma.gallery.findMany({
-		where: { status: "PUBLISHED" },
-		select: { id: true },
-	});
-
-	return galleries.map((g) => g.id);
+// Filters for the public photo listing. Slugs are matched together with the
+// public gates of their entity, so an unknown or hidden slug yields no rows.
+export interface PublicPhotoFilter {
+	gallerySlug?: string;
+	categorySlug?: string;
+	tagSlug?: string;
+	featuredOnly?: boolean;
+	takenFrom?: Date;
+	takenTo?: Date;
+	q?: string;
 }
 
-export async function findMembershipPhotoIds(
-	galleryIds: string[],
-): Promise<{ photoId: string; isFeatured: boolean }[]> {
-	if (galleryIds.length === 0) {
-		return [];
+// Exposure invariant (see schema.prisma): PUBLISHED + PUBLIC photo that sits
+// in at least one PUBLISHED gallery. Relation filters compile to semi-joins,
+// so membership, taxonomy and pagination are all resolved in PostgreSQL.
+function publicPhotoWhere(filter: PublicPhotoFilter): Prisma.PhotoWhereInput {
+	const and: Prisma.PhotoWhereInput[] = [];
+
+	// A gallery or featured pin already implies membership in a published
+	// gallery, so the plain membership check is only needed without them.
+	if (filter.gallerySlug !== undefined) {
+		and.push({ galleryEntries: { some: { gallery: { slug: filter.gallerySlug, status: "PUBLISHED" } } } });
 	}
 
-	const rows = await prisma.galleryPhoto.findMany({
-		where: { galleryId: { in: galleryIds } },
-		select: { photoId: true, isFeatured: true },
-	});
-
-	return rows.map((row) => ({ photoId: row.photoId, isFeatured: row.isFeatured }));
-}
-
-export async function findPhotoIdsByCategorySlug(slug: string): Promise<string[]> {
-	const category = await prisma.category.findUnique({
-		where: { slug, status: "ACTIVE" },
-		select: { id: true },
-	});
-
-	if (category === null) {
-		return [];
+	if (filter.featuredOnly === true) {
+		and.push({ galleryEntries: { some: { isFeatured: true, gallery: { status: "PUBLISHED" } } } });
 	}
 
-	const rows = await prisma.photoCategory.findMany({
-		where: { categoryId: category.id },
-		select: { photoId: true },
-	});
-
-	return rows.map((row) => row.photoId);
-}
-
-export async function findPhotoIdsByTagSlug(slug: string): Promise<string[]> {
-	const tag = await prisma.tag.findUnique({
-		where: { slug, status: "ACTIVE", visibility: "PUBLIC" },
-		select: { id: true },
-	});
-
-	if (tag === null) {
-		return [];
+	if (and.length === 0) {
+		and.push({ galleryEntries: { some: { gallery: { status: "PUBLISHED" } } } });
 	}
 
-	const rows = await prisma.photoTag.findMany({
-		where: { tagId: tag.id },
-		select: { photoId: true },
-	});
+	if (filter.categorySlug !== undefined) {
+		and.push({ categories: { some: { category: { slug: filter.categorySlug, status: "ACTIVE" } } } });
+	}
 
-	return rows.map((row) => row.photoId);
+	if (filter.tagSlug !== undefined) {
+		and.push({ tags: { some: { tag: { slug: filter.tagSlug, status: "ACTIVE", visibility: "PUBLIC" } } } });
+	}
+
+	if (filter.takenFrom !== undefined || filter.takenTo !== undefined) {
+		and.push({
+			takenAt: {
+				...(filter.takenFrom === undefined ? {} : { gte: filter.takenFrom }),
+				...(filter.takenTo === undefined ? {} : { lte: filter.takenTo }),
+			},
+		});
+	}
+
+	if (filter.q !== undefined) {
+		const q = filter.q;
+		const or: Prisma.PhotoWhereInput[] = [
+			{ title: { contains: q, mode: "insensitive" } },
+			{ description: { contains: q, mode: "insensitive" } },
+		];
+
+		if (/^\d+$/.test(q)) {
+			or.push({ number: parseInt(q, 10) });
+		}
+
+		and.push({ OR: or });
+	}
+
+	return { status: "PUBLISHED", visibility: "PUBLIC", AND: and };
 }
 
-// List photos with candidate ID filtering done in JS (avoids mock `in` clause bug).
-// `candidatePhotoIds` is the set of photo IDs allowed by gallery membership + filters.
-// `where` contains remaining filters (q, takenAt, availability, etc.) WITHOUT id filter.
 export async function listPublicPhotos(
-	candidatePhotoIds: Set<string>,
-	where: PublicPhotoWhere,
+	filter: PublicPhotoFilter,
 	skip: number,
 	take: number,
-	orderBy: { createdAt: "asc" | "desc" },
+	direction: "asc" | "desc",
 ): Promise<Photo[]> {
-	const allPhotos = await prisma.photo.findMany({
-		where: { ...basePhotoWhere(), ...where },
-		orderBy,
+	return prisma.photo.findMany({
+		where: publicPhotoWhere(filter),
+		orderBy: { createdAt: direction },
+		skip,
+		take,
 	});
-
-	// Filter by candidate set in JS (mock-safe, and dataset is small in tests).
-	const filtered = allPhotos.filter((p) => candidatePhotoIds.has(p.id));
-
-	return filtered.slice(skip, skip + take);
 }
 
-export async function countPublicPhotos(
-	candidatePhotoIds: Set<string>,
-	where: PublicPhotoWhere,
-): Promise<number> {
-	const allPhotos = await prisma.photo.findMany({
-		where: { ...basePhotoWhere(), ...where },
-	});
-
-	return allPhotos.filter((p) => candidatePhotoIds.has(p.id)).length;
+export async function countPublicPhotos(filter: PublicPhotoFilter): Promise<number> {
+	return prisma.photo.count({ where: publicPhotoWhere(filter) });
 }
 
 export async function findPhotoByNumberPublic(number: number): Promise<Photo | null> {
