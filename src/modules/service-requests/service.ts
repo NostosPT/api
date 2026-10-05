@@ -19,7 +19,6 @@ import {
 	findClientByEmail,
 	findRequestById,
 	findServiceBySlug,
-	generateNextReference,
 	getRequestNotes as listRequestNotes,
 	listRequests,
 	updateRequest,
@@ -71,7 +70,6 @@ export async function createPublicServiceRequest(input: CreateServiceRequestBody
 	}
 
 	const request = await createRequest({
-		reference: await generateNextReference(),
 		title: `${service.name} - ${input.contact.name?.trim() || "New Request"}`,
 		clientId: client.id,
 		serviceId: service.id,
